@@ -4,17 +4,11 @@ import React from "react";
 import { useJourneyStore } from "@/lib/state/journeyStore";
 import {
   ArrowLeft,
-  CheckCircle2,
-  ChevronRight,
   Coffee,
   HelpCircle,
   MapPin,
-  Mountain,
   Navigation,
-  Plus,
-  ShieldCheck,
   Sparkles,
-  Zap,
 } from "lucide-react";
 
 export const RouteComparison: React.FC = () => {
@@ -23,10 +17,10 @@ export const RouteComparison: React.FC = () => {
     selectRoute,
     startJourney,
     toggleWhyThisRoute,
-    toggleStop,
     setPlanningStep,
-    setJourneyState,
   } = useJourneyStore();
+
+  const isLight = state.theme === "light";
 
   const isRoutesReady =
     state.journeyState === "ROUTES_READY" ||
@@ -39,37 +33,41 @@ export const RouteComparison: React.FC = () => {
   if (!isRoutesReady || state.routes.length === 0) return null;
 
   return (
-    <div className="absolute top-20 sm:top-24 left-4 right-4 sm:left-6 sm:right-auto sm:w-[480px] z-20 max-h-[85vh] flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
-      <div className="glass-panel p-4 sm:p-5 rounded-3xl shadow-xl border border-white/10 flex flex-col gap-3 overflow-y-auto max-h-[82vh]">
-        {/* Header with Destination and Back Button */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-200/80 dark:border-slate-800/80">
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => setPlanningStep("preferences")}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="Back to Preferences"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
+    <div className="absolute bottom-6 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-[440px] z-20 pointer-events-auto max-h-[78vh] flex flex-col">
+      <div className={`rounded-2xl shadow-2xl border overflow-hidden flex flex-col ${
+        isLight
+          ? "bg-white/97 border-slate-200"
+          : "bg-slate-900/95 border-white/10"
+      } backdrop-blur-xl`}>
+        {/* Header */}
+        <div className={`flex items-center gap-3 px-4 py-3.5 border-b flex-shrink-0 ${
+          isLight ? "border-slate-100" : "border-white/6"
+        }`}>
+          <button
+            onClick={() => setPlanningStep("preferences")}
+            className={`p-1.5 rounded-xl transition-colors flex-shrink-0 ${
+              isLight ? "text-slate-400 hover:text-slate-700 hover:bg-slate-100" : "text-slate-500 hover:text-white hover:bg-white/8"
+            }`}
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
 
-            <div>
-              <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Recommended Corridors</span>
-              </div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">
-                To {state.destination?.name || "Lonavala"}
-              </h2>
+          <div className="flex-1">
+            <div className="flex items-center gap-1 text-[11px] text-emerald-500 font-bold uppercase tracking-wider">
+              <Sparkles className="w-3 h-3" />
+              <span>Routes to {state.destination?.name}</span>
             </div>
           </div>
 
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+          <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+            isLight ? "bg-slate-50 border-slate-200 text-slate-600" : "bg-white/5 border-white/10 text-slate-400"
+          }`}>
             {state.routes.length} options
           </span>
         </div>
 
-        {/* Route Cards */}
-        <div className="flex flex-col gap-2.5">
+        {/* Route Cards — Scrollable */}
+        <div className="overflow-y-auto flex-1 p-3 flex flex-col gap-2.5">
           {state.routes.map((route) => {
             const isSelected = route.id === state.selectedRouteId;
             const durationMin = Math.round(
@@ -81,130 +79,124 @@ export const RouteComparison: React.FC = () => {
               <div
                 key={route.id}
                 onClick={() => selectRoute(route.id)}
-                className={`cursor-pointer rounded-2xl p-4 transition-all duration-200 border relative ${
+                className={`cursor-pointer rounded-xl p-4 transition-all duration-200 border ${
                   isSelected
-                    ? "bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500 shadow-sm"
-                    : "bg-slate-50 dark:bg-slate-850/70 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
+                    ? isLight
+                      ? "bg-emerald-50 border-emerald-400 shadow-sm"
+                      : "bg-emerald-500/10 border-emerald-500/70 shadow-sm"
+                    : isLight
+                      ? "bg-slate-50 border-slate-200 hover:border-slate-300"
+                      : "bg-white/4 border-white/8 hover:border-white/15"
                 }`}
               >
-                {/* Wayve Pick Highlight Badge */}
+                {/* Wayve Pick Badge */}
                 {route.isWayvePick && (
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500 text-slate-950 uppercase tracking-wider shadow-sm">
-                      <Sparkles className="w-3 h-3" />
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white uppercase tracking-wide">
+                      <Sparkles className="w-2.5 h-2.5" />
                       Wayve's Pick
                     </span>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleWhyThisRoute(true);
-                      }}
-                      className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
+                      onClick={(e) => { e.stopPropagation(); toggleWhyThisRoute(true); }}
+                      className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
                     >
-                      <span>Why this route?</span>
-                      <HelpCircle className="w-3.5 h-3.5" />
+                      <span>Why?</span>
+                      <HelpCircle className="w-3 h-3" />
                     </button>
                   </div>
                 )}
 
+                {/* Route Name & ETA */}
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <div className="flex-1 min-w-0">
+                    <h3 className={`text-sm font-bold truncate ${isLight ? "text-slate-900" : "text-white"}`}>
                       {route.name}
                     </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{route.summary}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">{route.summary}</p>
                   </div>
 
                   <div className="text-right flex-shrink-0">
-                    <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                      {durationMin} min
+                    <span className={`text-lg font-bold font-mono ${isSelected ? "text-emerald-500" : isLight ? "text-slate-900" : "text-white"}`}>
+                      {durationMin}<span className="text-xs font-medium ml-0.5">min</span>
                     </span>
-                    <span className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 font-mono">
+                    <span className={`block text-[11px] font-medium font-mono ${isLight ? "text-slate-500" : "text-slate-400"}`}>
                       {distKm} km
                     </span>
                   </div>
                 </div>
 
-                {/* Badges / Attributes */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px]">
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full font-medium ${
-                      route.trafficCondition === "low"
-                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                        : route.trafficCondition === "moderate"
+                {/* Traffic & Attribute Pills */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                    route.trafficCondition === "low"
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : route.trafficCondition === "moderate"
                         ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                         : "bg-red-500/15 text-red-700 dark:text-red-300"
-                    }`}
-                  >
-                    🚦 {route.trafficCondition === "low" ? "Low traffic" : "Moderate traffic"}
+                  }`}>
+                    🚦 {route.trafficCondition === "low" ? "Low traffic" : route.trafficCondition === "moderate" ? "Moderate" : "Heavy"}
                   </span>
 
                   {route.weatherCondition && (
-                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-medium">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      isLight ? "bg-slate-100 text-slate-600" : "bg-white/8 text-slate-300"
+                    }`}>
                       ☀️ {route.weatherCondition.tempC}°C
                     </span>
                   )}
 
                   {route.isWayvePick && (
-                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold">
-                      🌿 Optimal Match
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                      ✦ Score {route.score}/100
                     </span>
                   )}
                 </div>
 
-                {/* Wayve Explanation snippet */}
-                {route.recommendationReason && (
-                  <p className="text-xs text-slate-700 dark:text-slate-300 bg-slate-100/90 dark:bg-slate-900/80 p-2.5 rounded-xl mt-2.5 border border-slate-200 dark:border-slate-800 leading-relaxed">
+                {/* Recommendation reason for selected route */}
+                {isSelected && route.recommendationReason && (
+                  <p className={`text-[11px] mt-2.5 p-2.5 rounded-lg leading-relaxed ${
+                    isLight ? "bg-slate-100 text-slate-600" : "bg-white/5 text-slate-400"
+                  }`}>
                     {route.recommendationReason}
                   </p>
                 )}
 
-                {/* Primary CTA inside selected card */}
+                {/* Start Journey CTA — inside selected card */}
                 {isSelected && (
-                  <div className="mt-3 pt-3 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between">
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      Match: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{route.score}/100</strong>
-                    </span>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        startJourney();
-                      }}
-                      className="px-5 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all active:scale-95"
-                    >
-                      <Navigation className="w-3.5 h-3.5 fill-slate-950" />
-                      <span>Start Journey</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startJourney(); }}
+                    className="mt-3 w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all"
+                  >
+                    <Navigation className="w-4 h-4 fill-white" />
+                    <span>Start Navigation</span>
+                  </button>
                 )}
               </div>
             );
           })}
-        </div>
 
-        {/* Waypoints / Stops Along Route */}
-        {state.stops.some((s) => s.added) && (
-          <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80">
-            <span className="text-xs font-bold text-slate-900 dark:text-white block mb-1.5">
-              Included Stops
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {state.stops
-                .filter((s) => s.added)
-                .map((stop) => (
-                  <div
-                    key={stop.id}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-semibold"
-                  >
-                    <Coffee className="w-3 h-3 text-emerald-500" />
-                    <span>{stop.name}</span>
-                    <span className="text-[10px] text-slate-500">(+{stop.detourMinutes}m)</span>
-                  </div>
-                ))}
+          {/* Stops along route summary */}
+          {state.stops.some((s) => s.added) && (
+            <div className={`rounded-xl p-3 flex flex-wrap items-center gap-2 border ${
+              isLight ? "bg-emerald-50 border-emerald-200" : "bg-emerald-500/8 border-emerald-500/20"
+            }`}>
+              <MapPin className="w-3.5 h-3.5 text-emerald-500" />
+              <span className={`text-xs font-semibold ${isLight ? "text-emerald-700" : "text-emerald-400"}`}>
+                Stops included:
+              </span>
+              {state.stops.filter((s) => s.added).map((stop) => (
+                <span
+                  key={stop.id}
+                  className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                >
+                  <Coffee className="w-3 h-3" />
+                  {stop.name}
+                  <span className="opacity-60 text-[10px]">+{stop.detourMinutes}m</span>
+                </span>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

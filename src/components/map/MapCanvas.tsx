@@ -13,6 +13,7 @@ export const MapCanvas: React.FC = () => {
   const userMarkerElementRef = useRef<HTMLDivElement | null>(null);
   const destMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const incidentMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const stopMarkersRef = useRef<mapboxgl.Marker[]>([]);
 
   const { state, selectRoute, setMapViewMode } = useJourneyStore();
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -43,12 +44,13 @@ export const MapCanvas: React.FC = () => {
     mapboxgl.accessToken = cleanToken;
 
     try {
+      const is3D = state.mapViewMode === "3d";
       const map = new mapboxgl.Map({
         container: mapContainerRef.current,
         style: getStyleUrl(state.mapViewMode, isLight),
         center: [state.origin.coordinate.lng, state.origin.coordinate.lat],
-        zoom: 11,
-        pitch: state.mapViewMode === "3d" ? 55 : 0,
+        zoom: is3D ? 14 : 11,
+        pitch: is3D ? 60 : 0,
         bearing: state.bearing || 0,
         attributionControl: false,
       });
@@ -109,9 +111,11 @@ export const MapCanvas: React.FC = () => {
     map.setStyle(targetStyle);
 
     if (state.mapViewMode === "2d") {
-      map.easeTo({ pitch: 0, duration: 600 });
+      map.easeTo({ pitch: 0, zoom: 11, duration: 700 });
     } else if (state.mapViewMode === "3d") {
-      map.easeTo({ pitch: 58, duration: 600 });
+      map.easeTo({ pitch: 62, zoom: Math.max(map.getZoom(), 14), duration: 700 });
+    } else if (state.mapViewMode === "satellite") {
+      map.easeTo({ pitch: 0, zoom: 11, duration: 700 });
     }
   }, [state.mapViewMode, isLight, mapLoaded]);
 
@@ -286,12 +290,13 @@ export const MapCanvas: React.FC = () => {
         const el = document.createElement("div");
         el.className = "flex flex-col items-center cursor-pointer";
         el.innerHTML = `
-          <div class="px-3 py-1 rounded-full ${isLight ? "bg-white text-slate-900 border border-slate-200" : "bg-slate-900/95 text-white border border-white/10"} text-xs font-semibold shadow-xl backdrop-blur-md mb-1 whitespace-nowrap">
+          <div style="padding:6px 12px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;margin-bottom:4px;box-shadow:0 4px 16px rgba(0,0,0,0.25);backdrop-filter:blur(12px);background:${isLight ? "rgba(255,255,255,0.97)" : "rgba(15,23,42,0.96)"};color:${isLight ? "#0f172a" : "#ffffff"};border:1px solid ${isLight ? "rgba(226,232,240,0.9)" : "rgba(255,255,255,0.12)"}">
             📍 ${state.destination.name}
           </div>
-          <div class="w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-lg"></div>
+          <div style="width:14px;height:14px;background:#10b981;border-radius:50%;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3)"></div>
+          <div style="width:2px;height:8px;background:#10b981;margin-top:-1px"></div>
         `;
-        destMarkerRef.current = new mapboxgl.Marker({ element: el })
+        destMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
           .setLngLat([state.destination.coordinate.lng, state.destination.coordinate.lat])
           .addTo(map);
       } else {
@@ -302,6 +307,44 @@ export const MapCanvas: React.FC = () => {
       destMarkerRef.current = null;
     }
   }, [state.destination, mapLoaded, isLight]);
+
+  // Update Stop Waypoint Markers (when stops are added along the route)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    // Remove previous stop markers
+    stopMarkersRef.current.forEach((m) => m.remove());
+    stopMarkersRef.current = [];
+
+    const addedStops = state.stops.filter((s) => s.added);
+    if (!state.activeRoute || addedStops.length === 0) return;
+
+    const geometry = state.activeRoute.geometry;
+    if (!geometry || geometry.length < 2) return;
+
+    // Distribute stop markers evenly along the route geometry
+    addedStops.forEach((stop, i) => {
+      const frac = (i + 1) / (addedStops.length + 1);
+      const ptIdx = Math.round(frac * (geometry.length - 1));
+      const [lng, lat] = geometry[ptIdx];
+
+      const stopEmoji = stop.type === "coffee" ? "☕" : stop.type === "snacks" ? "🍔" : "⛽";
+      const el = document.createElement("div");
+      el.className = "flex flex-col items-center cursor-pointer";
+      el.innerHTML = `
+        <div style="padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;margin-bottom:3px;box-shadow:0 3px 12px rgba(0,0,0,0.2);backdrop-filter:blur(10px);background:${isLight ? "rgba(255,255,255,0.96)" : "rgba(15,23,42,0.94)"};color:${isLight ? "#0f172a" : "#ffffff"};border:1px solid ${isLight ? "rgba(226,232,240,0.8)" : "rgba(255,255,255,0.10)"}">
+          ${stopEmoji} ${stop.name}
+        </div>
+        <div style="width:10px;height:10px;background:#f59e0b;border-radius:50%;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>
+      `;
+
+      const marker = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat([lng, lat])
+        .addTo(map);
+      stopMarkersRef.current.push(marker);
+    });
+  }, [state.stops, state.activeRoute, mapLoaded, isLight]);
 
   // Update Active Incident Marker
   useEffect(() => {
@@ -435,21 +478,25 @@ export const MapCanvas: React.FC = () => {
         </div>
       )}
 
-      {/* Floating Map View Selector [ 2D | 3D | Satellite ] (Bottom-Right) */}
-      <div className="absolute right-4 bottom-24 sm:bottom-8 z-20 flex items-center gap-1.5 p-1 glass-panel rounded-full shadow-lg border border-white/10 pointer-events-auto">
-        {(["2d", "3d", "satellite"] as MapViewMode[]).map((mode) => {
+      {/* Floating Map View Selector [ 2D | 3D | Satellite ] — Bottom Right, above HUD */}
+      <div className={`absolute right-4 bottom-24 z-20 flex flex-col gap-1.5 pointer-events-auto`}>
+        {(["3d", "2d", "satellite"] as MapViewMode[]).map((mode) => {
           const isSelected = state.mapViewMode === mode;
+          const label = mode === "satellite" ? "🛰" : mode.toUpperCase();
           return (
             <button
               key={mode}
               onClick={() => setMapViewMode(mode)}
-              className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider transition-all active:scale-95 ${
+              className={`w-12 h-10 rounded-xl text-xs font-bold uppercase tracking-wide transition-all active:scale-95 shadow-md border ${
                 isSelected
-                  ? "bg-emerald-500 text-slate-950 shadow-md font-bold"
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
-              }`}
+                  ? "bg-emerald-500 border-emerald-500 text-white shadow-emerald-500/30"
+                  : isLight
+                    ? "bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-50"
+                    : "bg-slate-900/90 border-white/10 text-slate-400 hover:border-white/20 hover:text-white"
+              } backdrop-blur-md`}
+              title={`Switch to ${mode} view`}
             >
-              {mode}
+              {label}
             </button>
           );
         })}
