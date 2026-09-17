@@ -88,6 +88,8 @@ export interface JourneyStoreState {
   isSettingsOpen: boolean;
   isDemoPlaying: boolean;
   demoStep: number;
+  isReplaying: boolean;
+  replaySpeed: number;
 }
 
 const initialPreferences: JourneyPreferences = {
@@ -100,7 +102,7 @@ const initialPreferences: JourneyPreferences = {
   avoidHighways: false,
   avoidTolls: false,
   avoidRain: false,
-  maxDetourMinutes: 10,
+  maxDetourMinutes: 15,
 };
 
 // Global in-memory state object
@@ -159,6 +161,8 @@ let globalStore: JourneyStoreState = {
   isSettingsOpen: false,
   isDemoPlaying: false,
   demoStep: 0,
+  isReplaying: false,
+  replaySpeed: 1,
 };
 
 const listeners = new Set<() => void>();
@@ -237,11 +241,12 @@ export function useJourneyStore() {
       });
     },
 
-    // Step 2: Calculate routes with chosen mode & preferences
+    // Step 2: Calculate routes with chosen mode, preferences & waypoints
     calculateRoutes: async () => {
       const dest = globalStore.destination;
       if (!dest) return;
-      await journeyActions.generateRoutes(globalStore.origin.coordinate, dest);
+      const waypoints = globalStore.stops.filter((s) => s.added).map((s) => s.coordinate);
+      await journeyActions.generateRoutes(globalStore.origin.coordinate, dest, waypoints);
     },
 
     setDestinationDirectAndCalculate: (dest: Destination) => {
@@ -294,9 +299,81 @@ export function useJourneyStore() {
         journeyState: "NAVIGATING",
         tripStartTime: now,
         currentManeuverIndex: 0,
-        routeProgress: 0.05,
+        routeProgress: 0.02,
         elapsedSeconds: 0,
         bearing: initialBearing,
+        isReplaying: true,
+        replaySpeed: 1,
+      });
+    },
+
+    toggleReplay: (val?: boolean) => {
+      updateStore((prev) => ({
+        isReplaying: val !== undefined ? val : !prev.isReplaying,
+      }));
+    },
+
+    setReplaySpeed: (replaySpeed: number) => {
+      updateStore({ replaySpeed });
+    },
+
+    seekProgress: (progress: number) => {
+      const clamped = Math.max(0, Math.min(1, progress));
+      updateStore((prev) => {
+        if (!prev.activeRoute || !prev.activeRoute.geometry || prev.activeRoute.geometry.length === 0) {
+          return { routeProgress: clamped };
+        }
+        const geom = prev.activeRoute.geometry;
+        const ptIdx = Math.min(geom.length - 1, Math.floor(clamped * (geom.length - 1)));
+        const [lng, lat] = geom[ptIdx];
+        const nextBearing = getRouteSegmentBearing(geom, ptIdx);
+        const totalManeuvers = prev.activeRoute.maneuvers?.length || 5;
+        const maneuverIdx = Math.min(totalManeuvers - 1, Math.floor(clamped * totalManeuvers));
+
+        return {
+          routeProgress: clamped,
+          currentLocation: { lat, lng },
+          bearing: nextBearing,
+          currentManeuverIndex: maneuverIdx,
+          currentSpeedKmh: clamped >= 0.98 ? 0 : Math.round(58 + Math.random() * 8),
+        };
+      });
+    },
+
+    tickReplay: (deltaPercent: number = 0.012) => {
+      updateStore((prev) => {
+        if (!prev.isReplaying || (prev.journeyState !== "NAVIGATING" && prev.journeyState !== "MONITORING")) {
+          return {};
+        }
+
+        const nextProgress = Math.min(1.0, prev.routeProgress + deltaPercent * (prev.replaySpeed || 1));
+        if (nextProgress >= 0.99) {
+          journeyActions.arriveAtDestination();
+          return { isReplaying: false, routeProgress: 1.0, currentSpeedKmh: 0 };
+        }
+
+        const geom = prev.activeRoute?.geometry;
+        let nextCoord = prev.currentLocation;
+        let nextBearing = prev.bearing;
+        let maneuverIdx = prev.currentManeuverIndex;
+
+        if (geom && geom.length > 1) {
+          const ptIdx = Math.min(geom.length - 1, Math.floor(nextProgress * (geom.length - 1)));
+          const [lng, lat] = geom[ptIdx];
+          nextCoord = { lat, lng };
+          nextBearing = getRouteSegmentBearing(geom, ptIdx);
+          const totalManeuvers = prev.activeRoute?.maneuvers?.length || 5;
+          maneuverIdx = Math.min(totalManeuvers - 1, Math.floor(nextProgress * totalManeuvers));
+        }
+
+        return {
+          routeProgress: nextProgress,
+          currentLocation: nextCoord,
+          bearing: nextBearing,
+          currentManeuverIndex: maneuverIdx,
+          currentSpeedKmh: Math.round(62 + Math.sin(nextProgress * 25) * 8),
+          journeyState: "MONITORING",
+        };
       });
     },
 
@@ -433,32 +510,116 @@ export function useJourneyStore() {
           isAiThinking: false,
         }));
 
-        if (data.intent === "find_destination") {
-          updateStore({
-            journeyState: "PLANNING",
-            planningStep: "destination",
-            candidateDestinations: DETERMINISTIC_DESTINATIONS,
-          });
-        } else if (data.destinationName) {
-          const matched = DETERMINISTIC_DESTINATIONS.find((d) =>
-            d.name.toLowerCase().includes(data.destinationName.toLowerCase())
-          ) || DETERMINISTIC_DESTINATIONS[0];
-          updateStore({ destination: matched, planningStep: "preferences" });
-          journeyActions.generateRoutes(globalStore.origin.coordinate, matched);
+        let targetDest: Destination | null = globalStore.destination;
+        if (data.destinationName) {
+          // Live geocode destination via /api/v1/search
+          try {
+            const sRes = await fetch("/api/v1/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                query: data.destinationName,
+                proximity: globalStore.origin.coordinate,
+              }),
+            });
+            const sData = await sRes.json();
+            if (sData.destinations && sData.destinations.length > 0) {
+              targetDest = sData.destinations[0];
+            }
+          } catch {
+            // fallback
+          }
+
+          if (!targetDest) {
+            targetDest = DETERMINISTIC_DESTINATIONS.find((d) =>
+              d.name.toLowerCase().includes(data.destinationName.toLowerCase())
+            ) || {
+              id: `dest-${Date.now()}`,
+              name: data.destinationName,
+              type: "place",
+              address: `${data.destinationName}, Maharashtra`,
+              coordinate: { lat: 18.9365, lng: 72.8241 }, // Marine Drive Mumbai
+              category: "Destination",
+            };
+          }
+          updateStore({ destination: targetDest, planningStep: "preferences" });
         }
 
         if (data.journeyMode) {
           journeyActions.setJourneyMode(data.journeyMode);
         }
 
+        // Live geocode and resolve requested stops (e.g. Starbucks)
+        let updatedStops = [...globalStore.stops];
         if (data.stopsRequested && data.stopsRequested.length > 0) {
-          updateStore((prev) => {
-            const stops = prev.stops.map((s) => ({
-              ...s,
-              added: data.stopsRequested.includes(s.type) || s.added,
+          for (const stopReq of data.stopsRequested) {
+            const cleanReq = stopReq.toLowerCase().trim();
+            let stopCoord = { lat: 18.5308, lng: 73.8475 }; // Default FC Road Starbucks near Pune origin
+            let stopName = stopReq.charAt(0).toUpperCase() + stopReq.slice(1);
+
+            try {
+              const sRes = await fetch("/api/v1/search", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  query: cleanReq.includes("starbucks") ? "Starbucks" : cleanReq,
+                  proximity: globalStore.origin.coordinate,
+                }),
+              });
+              const sData = await sRes.json();
+              if (sData.destinations && sData.destinations.length > 0) {
+                const found = sData.destinations[0];
+                stopName = found.name;
+                stopCoord = found.coordinate;
+              }
+            } catch {
+              // fallback
+            }
+
+            const existingIdx = updatedStops.findIndex(
+              (s) => s.name.toLowerCase().includes(cleanReq) || s.type.toLowerCase().includes(cleanReq)
+            );
+            if (existingIdx >= 0) {
+              updatedStops[existingIdx] = {
+                ...updatedStops[existingIdx],
+                coordinate: stopCoord,
+                added: true,
+              };
+            } else {
+              updatedStops.push({
+                id: `stop-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                name: stopName,
+                type: "coffee",
+                coordinate: stopCoord,
+                detourMinutes: 6,
+                added: true,
+                rating: 4.8,
+              });
+            }
+          }
+          updateStore({ stops: updatedStops });
+        }
+
+        // Recalculate routes via waypoint(s) and reroute immediately
+        if (targetDest) {
+          const waypoints = updatedStops.filter((s) => s.added).map((s) => s.coordinate);
+          const isNavigating =
+            globalStore.journeyState === "NAVIGATING" || globalStore.journeyState === "MONITORING";
+          const startPt = isNavigating
+            ? globalStore.currentLocation
+            : globalStore.origin.coordinate;
+
+          await journeyActions.generateRoutes(startPt, targetDest, waypoints);
+
+          if (isNavigating) {
+            updateStore((prev) => ({
+              reroutesCount: prev.reroutesCount + 1,
+              currentManeuverIndex: 0,
+              routeProgress: 0.05,
+              journeyState: "NAVIGATING",
+              isReplaying: true,
             }));
-            return { stops };
-          });
+          }
         }
       } catch {
         updateStore((prev) => ({
@@ -484,13 +645,17 @@ export function useJourneyStore() {
         routes: [],
         selectedRouteId: null,
         activeRoute: null,
-        bearing: 0,
-        currentManeuverIndex: 0,
         routeProgress: 0.0,
+        elapsedSeconds: 0,
+        currentManeuverIndex: 0,
         activeIncident: null,
         replanningAssessment: null,
         isSimulating: false,
         tripIntelligence: null,
+        tripStartTime: null,
+        isReplaying: false,
+        currentLocation: globalStore.origin.coordinate,
+        bearing: 0,
         isConversationOpen: false,
         isSearchOpen: false,
       });
@@ -580,8 +745,10 @@ export const journeyActions = {
     });
   },
 
-  generateRoutes: async (origin: Coordinate, destination: Destination) => {
+  generateRoutes: async (origin: Coordinate, destination: Destination, waypoints?: Coordinate[]) => {
     updateStore({ journeyState: "ROUTES_LOADING" });
+    const activeWaypoints =
+      waypoints || globalStore.stops.filter((s) => s.added).map((s) => s.coordinate);
     try {
       const res = await fetch("/api/v1/routes", {
         method: "POST",
@@ -590,6 +757,7 @@ export const journeyActions = {
           origin,
           destination: destination.coordinate,
           mode: globalStore.journeyMode,
+          waypoints: activeWaypoints,
         }),
       });
       const data = await res.json();
