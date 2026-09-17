@@ -152,20 +152,22 @@ export async function extractJourneyIntent(
     return parseIntentRuleBased(userPrompt, currentDestination, "No API key configured. Built-in NLP active.");
   }
 
-  // Validate Google AI Studio key format
-  if (!apiKey.startsWith("AIzaSy")) {
+  // Validate Google AI Studio key format (legacy AIzaSy or new AQ. format since June 2026)
+  const isLegacyKey = apiKey.startsWith("AIzaSy");
+  const isNewAuthKey = apiKey.startsWith("AQ.");
+  if (!isLegacyKey && !isNewAuthKey) {
     const prefix = apiKey.substring(0, 6);
-    console.warn(`[Gemini Provider] Invalid API key format (starts with '${prefix}'). Google AI Studio keys must start with 'AIzaSy'. Switching to local NLP fallback.`);
+    console.warn(`[Gemini Provider] Unrecognized API key format (starts with '${prefix}'). Expected 'AIzaSy...' (legacy) or 'AQ.' (new Auth Key). Switching to local NLP fallback.`);
     return parseIntentRuleBased(
       userPrompt,
       currentDestination,
-      `API key format invalid (starts with '${prefix}'). Expected Google AI Studio key starting with 'AIzaSy'. Using local NLP engine.`
+      `API key format unrecognized (starts with '${prefix}'). Expected 'AIzaSy...' or 'AQ.' prefix. Using local NLP engine.`
     );
   }
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
 
     const systemPrompt = `You are Wayve's Conversation Agent (Agent A).
 Your job is to convert natural language travel requests into structured journey objectives.
@@ -208,7 +210,7 @@ Never include markdown code fences or backticks. Only output the raw JSON object
       diagnostics: {
         status: "connected",
         engine: "gemini",
-        message: `Connected to Gemini 1.5 Flash (${latency}ms)`,
+        message: `Connected to Gemini 3.6 Flash (${latency}ms)`,
         keyPrefix: apiKey.substring(0, 6),
         latencyMs: latency,
       },

@@ -167,7 +167,7 @@ export const SettingsModal: React.FC = () => {
                   : "bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30"
               }`}
             >
-              {state.aiDiagnostics.engine === "gemini" ? "Gemini 1.5 Flash" : "Local NLP Engine"}
+              {state.aiDiagnostics.engine === "gemini" ? "Gemini 3.6 Flash" : "Local NLP Engine"}
             </span>
           </div>
 
@@ -177,7 +177,7 @@ export const SettingsModal: React.FC = () => {
 
           <div className="flex flex-col gap-2">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              Google AI Studio API Key (Starts with 'AIzaSy...')
+              Google AI Studio API Key (AIzaSy... or AQ.)
             </label>
 
             <div className="flex items-center gap-2">
@@ -185,7 +185,7 @@ export const SettingsModal: React.FC = () => {
                 type="password"
                 value={inputKey}
                 onChange={(e) => setInputKey(e.target.value)}
-                placeholder="AIzaSy..."
+                placeholder="AQ. or AIzaSy..."
                 className="flex-1 px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
 
