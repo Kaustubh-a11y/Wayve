@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { JourneyMode, JourneyPreferences } from "@/types/journey";
+import { AIDiagnostics, JourneyMode, JourneyPreferences } from "@/types/journey";
 
 export interface ParsedIntentResult {
   intent: "find_destination" | "plan_journey" | "modify_journey" | "add_stop" | "change_preferences" | "general_chat";
@@ -8,13 +8,18 @@ export interface ParsedIntentResult {
   stopsRequested?: string[];
   preferences?: Partial<JourneyPreferences>;
   replyMessage: string;
+  diagnostics?: AIDiagnostics;
 }
 
 /**
  * Deterministic fallback rule-based NLP parser.
  * Protects free-tier Gemini API quota and provides 100% offline & demo reliability.
  */
-export function parseIntentRuleBased(query: string, currentDestination?: string): ParsedIntentResult {
+export function parseIntentRuleBased(
+  query: string,
+  currentDestination?: string,
+  diagnosticReason?: string
+): ParsedIntentResult {
   const q = query.toLowerCase();
 
   let mode: JourneyMode = "scenic";
@@ -39,6 +44,12 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
     stops.push("fuel");
   }
 
+  const diagnostics: AIDiagnostics = {
+    status: "fallback",
+    engine: "rule_based",
+    message: diagnosticReason || "Built-in offline NLP engine active (100% route & demo reliability)",
+  };
+
   // 1. Destination Discovery ("nearest hill station", "take me to lonavala")
   if (q.includes("hill station") || q.includes("nearest") || q.includes("weekend trip") || q.includes("getaway")) {
     return {
@@ -52,6 +63,7 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
         traffic: 0.75,
       },
       replyMessage: "I found 3 nearby hill stations in the Western Ghats. Lonavala is the most accessible scenic route (65 km). Which one would you like to head to?",
+      diagnostics,
     };
   }
 
@@ -70,6 +82,7 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
       replyMessage: stops.length > 0
         ? `Plotting a ${mode} route to Lonavala with a stop for ${stops.join(" & ")}. Comparing road conditions now.`
         : `Setting course to Lonavala with ${mode} optimization. Comparing alternative corridors.`,
+      diagnostics,
     };
   }
 
@@ -80,6 +93,7 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
       journeyMode: mode,
       stopsRequested: stops,
       replyMessage: `Setting up your ${mode} route to Panchgani. Checking traffic along the mountain ghats.`,
+      diagnostics,
     };
   }
 
@@ -90,6 +104,7 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
       journeyMode: mode,
       stopsRequested: stops,
       replyMessage: `Setting course to Matheran via scenic foothills with ${mode} optimization.`,
+      diagnostics,
     };
   }
 
@@ -110,12 +125,14 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
       replyMessage: stops.length > 0
         ? `Added ${stops.join(" & ")} stop to your journey to ${dest}. Recalculating routes with minimum detour.`
         : `Updated your route preferences for ${dest}. Adjusting candidate route optimization.`,
+      diagnostics,
     };
   }
 
   return {
     intent: "general_chat",
-    replyMessage: "Where would you like to head today? You can say things like 'Nearest hill station', 'Take me to Lonavala', or 'Find snacks and make it scenic'.",
+    replyMessage: "Where would you like to head today? You can search any place, choose driving modes, or ask for scenic routes.",
+    diagnostics,
   };
 }
 
@@ -124,13 +141,26 @@ export function parseIntentRuleBased(query: string, currentDestination?: string)
  */
 export async function extractJourneyIntent(
   userPrompt: string,
-  currentDestination?: string
+  currentDestination?: string,
+  customKey?: string
 ): Promise<ParsedIntentResult> {
-  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  const startTime = Date.now();
+  const apiKey = (customKey || process.env.GEMINI_API_KEY || "").trim();
 
-  // If no Gemini API key configured, use deterministic rule-based parser
+  // Validate key existence
   if (!apiKey || apiKey.includes("your_gemini_api_key")) {
-    return parseIntentRuleBased(userPrompt, currentDestination);
+    return parseIntentRuleBased(userPrompt, currentDestination, "No API key configured. Built-in NLP active.");
+  }
+
+  // Validate Google AI Studio key format
+  if (!apiKey.startsWith("AIzaSy")) {
+    const prefix = apiKey.substring(0, 6);
+    console.warn(`[Gemini Provider] Invalid API key format (starts with '${prefix}'). Google AI Studio keys must start with 'AIzaSy'. Switching to local NLP fallback.`);
+    return parseIntentRuleBased(
+      userPrompt,
+      currentDestination,
+      `API key format invalid (starts with '${prefix}'). Expected Google AI Studio key starting with 'AIzaSy'. Using local NLP engine.`
+    );
   }
 
   try {
@@ -166,6 +196,7 @@ Never include markdown code fences or backticks. Only output the raw JSON object
     const rawText = result.response.text().trim();
     const cleanJson = rawText.replace(/^```json\s*/, "").replace(/```$/, "").trim();
     const parsed = JSON.parse(cleanJson);
+    const latency = Date.now() - startTime;
 
     return {
       intent: parsed.intent || "plan_journey",
@@ -174,9 +205,20 @@ Never include markdown code fences or backticks. Only output the raw JSON object
       stopsRequested: parsed.stopsRequested || [],
       preferences: parsed.preferences,
       replyMessage: parsed.replyMessage || "Understood. Updating your journey objectives.",
+      diagnostics: {
+        status: "connected",
+        engine: "gemini",
+        message: `Connected to Gemini 1.5 Flash (${latency}ms)`,
+        keyPrefix: apiKey.substring(0, 6),
+        latencyMs: latency,
+      },
     };
-  } catch {
-    // Graceful fallback to rule-based parser on rate limit or network error
-    return parseIntentRuleBased(userPrompt, currentDestination);
+  } catch (err: any) {
+    console.warn("[Gemini Provider] API Error, falling back to local NLP parser:", err.message);
+    return parseIntentRuleBased(
+      userPrompt,
+      currentDestination,
+      `Gemini request failed: ${err.message || "Network/Rate Limit error"}. Local NLP engine active.`
+    );
   }
 }

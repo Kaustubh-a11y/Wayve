@@ -21,10 +21,10 @@ const intent2 = parseIntentRuleBased(
   "Find somewhere for snacks on the way and make it scenic, I don't care if it's 10 minutes longer",
   "Lonavala"
 );
-assert.ok(intent2.stopsRequested.includes("snacks"));
+assert.ok(intent2.stopsRequested?.includes("snacks"));
 assert.strictEqual(intent2.journeyMode, "scenic");
-assert.strictEqual(intent2.preferences.scenic, 0.9);
-assert.strictEqual(intent2.preferences.fastest, 0.3);
+assert.strictEqual(intent2.preferences?.scenic, 0.9);
+assert.strictEqual(intent2.preferences?.fastest, 0.3);
 console.log("  ✔ Contextual stop & preference modification correctly parsed.");
 
 // TEST 2: ML ETA Prediction & Feature Attribution

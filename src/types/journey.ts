@@ -187,3 +187,15 @@ export interface ChatMessage {
     preferences?: Partial<JourneyPreferences>;
   };
 }
+
+export type ThemeMode = "light" | "dark" | "system";
+export type MapViewMode = "2d" | "3d" | "satellite";
+export type PlanningStep = "destination" | "preferences" | "routes";
+
+export interface AIDiagnostics {
+  status: "connected" | "fallback" | "error";
+  engine: "gemini" | "rule_based";
+  message: string;
+  keyPrefix?: string;
+  latencyMs?: number;
+}
