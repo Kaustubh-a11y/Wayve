@@ -37,3 +37,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Local documentation & reference assets
+brain.md
+refrence/
+reference/
