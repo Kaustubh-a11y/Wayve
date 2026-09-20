@@ -43,3 +43,12 @@ brain.md
 refrence/
 reference/
 ttsconfig.py
+
+# Institutional reports and local generation scripts (not pushed to github)
+/documentation/
+/Final report/
+build_full_report.py
+generate_final_report_tex.py
+inspect_docx.py
+sync_script.py
+tools/
