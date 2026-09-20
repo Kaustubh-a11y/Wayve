@@ -69,6 +69,7 @@ export const MapCanvas: React.FC = () => {
   const incidentMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const stopMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const routeDurationMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const bottleneckMarkersRef = useRef<mapboxgl.Marker[]>([]);
 
   const { state, selectRoute, setMapViewMode, toggleTrafficLayer } = useJourneyStore();
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -278,9 +279,11 @@ export const MapCanvas: React.FC = () => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
 
-    // Clear previous floating route badges
+    // Clear previous floating route badges and bottleneck markers
     routeDurationMarkersRef.current.forEach((m) => m.remove());
     routeDurationMarkersRef.current = [];
+    bottleneckMarkersRef.current.forEach((m) => m.remove());
+    bottleneckMarkersRef.current = [];
 
     // Clean up active route layers
     if (map.getLayer("route-active-casing")) map.removeLayer("route-active-casing");
@@ -512,12 +515,75 @@ export const MapCanvas: React.FC = () => {
         .addTo(map);
       routeDurationMarkersRef.current.push(activeMarker);
 
-      // Fit bounds to entire route
+      // Render Real-time Geographic Bottleneck Markers along the Active Route
+      if (active.realisticTraffic?.bottlenecks && active.realisticTraffic.bottlenecks.length > 0) {
+        active.realisticTraffic.bottlenecks.forEach((b) => {
+          const isSevere = b.severity === "severe";
+          const isHeavy = b.severity === "heavy";
+          const accentColor = isSevere ? "#dc2626" : isHeavy ? "#ea580c" : "#d97706";
+          const bgBadge = isSevere ? "#fef2f2" : isHeavy ? "#fff7ed" : "#fffbeb";
+
+          const el = document.createElement("div");
+          el.className = "cursor-pointer select-none transition-transform hover:scale-110 active:scale-95";
+          el.innerHTML = `
+            <div style="
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+              padding: 3px 8px;
+              border-radius: 999px;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 10.5px;
+              font-weight: 700;
+              box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+              background: ${isLight ? bgBadge : "#1e293b"};
+              color: ${accentColor};
+              border: 1.5px solid ${accentColor};
+              white-space: nowrap;
+            ">
+              <span style="font-size: 11px;">⚠️</span>
+              <span>${b.currentSpeedKmh} km/h</span>
+              <span style="font-size: 9px; opacity: 0.8; font-weight: 600;">· -${b.speedDegradationPercent}%</span>
+            </div>
+          `;
+
+          const popupHtml = `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 6px 4px; color: ${isLight ? "#1e293b" : "#f1f5f9"}; max-width: 260px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+                <span style="font-size: 11px; font-weight: 800; color: ${accentColor}; text-transform: uppercase; letter-spacing: 0.5px;">🚨 ${b.levelOfService}</span>
+                <span style="font-size: 10px; font-weight: 700; background: ${accentColor}20; color: ${accentColor}; padding: 1px 6px; border-radius: 999px;">${b.severity.toUpperCase()}</span>
+              </div>
+              <div style="font-size: 12px; font-weight: 700; margin-bottom: 4px;">${b.name}</div>
+              <div style="font-size: 11px; line-height: 1.4; color: ${isLight ? "#475569" : "#94a3b8"}; margin-bottom: 6px;">
+                Speed drops to <strong style="color:${accentColor}">${b.currentSpeedKmh} km/h</strong> (Normal: ${b.freeFlowSpeedKmh} km/h). Queue: <strong>~${b.queueLengthMeters}m</strong> (+${b.delayMinutes} min delay).
+              </div>
+              <div style="font-size: 10.5px; line-height: 1.35; background: ${isLight ? "#f8fafc" : "#0f172a"}; padding: 6px 8px; border-radius: 6px; border-left: 3px solid ${accentColor};">
+                <span style="font-weight: 700;">AI Advice:</span> ${b.aiDirective}
+              </div>
+            </div>
+          `;
+
+          const popup = new mapboxgl.Popup({ offset: 16, closeButton: false, maxWidth: "280px" })
+            .setHTML(popupHtml);
+
+          const marker = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+            .setLngLat([b.location.lng, b.location.lat])
+            .setPopup(popup)
+            .addTo(map);
+
+          bottleneckMarkersRef.current.push(marker);
+        });
+      }
+
+      // Fit bounds to entire route with responsive padding for mobile vs desktop
       if (state.journeyState === "ROUTES_READY" || state.journeyState === "AWAITING_CONFIRMATION" || state.journeyState === "IDLE") {
         const bounds = new mapboxgl.LngLatBounds();
         active.geometry.forEach((coord) => bounds.extend(coord));
+        const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
         map.fitBounds(bounds, {
-          padding: { top: 90, bottom: 90, left: 420, right: 60 },
+          padding: isMobile
+            ? { top: 90, bottom: 220, left: 24, right: 24 }
+            : { top: 90, bottom: 90, left: 440, right: 80 },
           pitch: state.mapViewMode === "3d" ? 45 : 0,
           duration: 1200,
         });

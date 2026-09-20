@@ -123,6 +123,65 @@ export interface RouteOption {
   warnings: string[];
   maneuvers: Maneuver[];
   shapAttribution?: FeatureAttribution[];
+
+  // Enhanced AI Traffic Intelligence
+  estimatedSpeedDropZones?: string[];
+  signalWaitEstimate?: string;
+  peakHourImpact?: string;
+  fuelEfficiencyScore?: string;
+  realisticTraffic?: RealisticTrafficIntelligence;
+}
+
+export type LevelOfService = "LOS A" | "LOS B" | "LOS C" | "LOS D" | "LOS E" | "LOS F";
+
+export interface TrafficBottleneck {
+  id: string;
+  name: string;
+  location: Coordinate;
+  severity: "moderate" | "heavy" | "severe";
+  levelOfService: LevelOfService;
+  currentSpeedKmh: number;
+  freeFlowSpeedKmh: number;
+  speedDegradationPercent: number; // e.g. -68%
+  delayMinutes: number;
+  queueLengthMeters: number;
+  cause: string;
+  aiDirective: string;
+}
+
+export interface DepartureWindowOption {
+  departureLabel: string;
+  etaMinutes: number;
+  delayMinutes: number;
+  congestionIndex: number;
+  isOptimal: boolean;
+  savingsDescription: string;
+}
+
+export interface RealisticTrafficIntelligence {
+  levelOfService: LevelOfService;
+  levelOfServiceDescription: string;
+  congestionIndex: number; // 0 to 100%
+  averageSpeedKmh: number;
+  freeFlowSpeedKmh: number;
+  speedDropPercent: number; // e.g. 48% speed reduction
+  totalQueueLengthMeters: number;
+  totalDelayMinutes: number;
+  signalizedIntersections: number;
+  averageSignalWaitSeconds: number;
+  greenWaveScorePercent: number;
+  peakCongestionWindow: string;
+  departurePredictions: DepartureWindowOption[];
+  carbonPenaltyKg: number;
+  fuelEfficiencyScore: string;
+  bottlenecks: TrafficBottleneck[];
+  liveIncidentAlerts: {
+    id: string;
+    title: string;
+    description: string;
+    impact: string;
+    type: "warning" | "danger" | "info";
+  }[];
 }
 
 export type IncidentType =

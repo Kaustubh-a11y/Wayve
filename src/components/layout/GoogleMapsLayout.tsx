@@ -1,13 +1,22 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useJourneyStore } from "@/lib/state/journeyStore";
 import { Destination, Stop, TravelMode } from "@/types/journey";
 import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
   Car,
+  ChevronDown,
+  ChevronUp,
+  Clock,
   Compass,
   CornerUpRight,
+  Gauge,
   Info,
+  Leaf,
+  List,
   MapPin,
   Moon,
   Navigation,
@@ -16,10 +25,14 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ShieldAlert,
   Sparkles,
   Sun,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
+import { speakNavInstruction, toggleTTSMute, isTTSMuted, stopTTS, getVoiceCast, setVoiceCast, VoiceCast } from "@/lib/services/ttsService";
 
 export const GoogleMapsLayout: React.FC = () => {
   const {
@@ -42,6 +55,7 @@ export const GoogleMapsLayout: React.FC = () => {
     switchRoute,
     stayOnRoute,
     toggleTrafficLayer,
+    seekProgress,
   } = useJourneyStore();
 
   const isLight = state.theme === "light";
@@ -63,6 +77,24 @@ export const GoogleMapsLayout: React.FC = () => {
   const [activeTravelMode, setActiveTravelMode] = useState<TravelMode>("driving");
   const [activeSearchTarget, setActiveSearchTarget] = useState<"main" | "origin" | "destination">("main");
   const suppressSuggestionsRef = useRef(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const prevManeuverIdxRef = useRef(-1);
+  const gpsWatchIdRef = useRef<number | null>(null);
+
+  // Mobile layout responsiveness states
+  const [isMobileRoutesExpanded, setIsMobileRoutesExpanded] = useState(false);
+  const [isMobileDirectionsCollapsed, setIsMobileDirectionsCollapsed] = useState(true);
+  const [isNavStepsOpen, setIsNavStepsOpen] = useState(false);
+  const [showTrafficIntel, setShowTrafficIntel] = useState(false);
+  const [voiceCast, setVoiceCastState] = useState<VoiceCast>("american");
+
+  const handleToggleVoiceCast = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const next: VoiceCast = voiceCast === "american" ? "sarvam" : "american";
+    setVoiceCastState(next);
+    setVoiceCast(next);
+    speakNavInstruction(next === "american" ? "American navigation voice active." : "Sarvam AI voice active.");
+  };
 
   // Keep search queries in sync with store
   useEffect(() => {
@@ -124,7 +156,7 @@ export const GoogleMapsLayout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchQuery, originQuery, destinationQuery, activeSearchTarget, state.origin?.coordinate, isDirectionsMode, state.destination, selectedPlace]);
 
-  // Automated drive replay loop when navigating
+  // Automated drive replay loop when navigating (simulation mode only, opt-in)
   useEffect(() => {
     if (!state.isReplaying || !isNavigating) return;
     const interval = setInterval(() => {
@@ -132,6 +164,63 @@ export const GoogleMapsLayout: React.FC = () => {
     }, 500);
     return () => clearInterval(interval);
   }, [state.isReplaying, isNavigating, tickReplay]);
+
+  // Real GPS tracking when navigating (non-simulation mode)
+  useEffect(() => {
+    if (!isNavigating || state.isReplaying) {
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+        gpsWatchIdRef.current = null;
+      }
+      return;
+    }
+    if (!navigator.geolocation) return;
+
+    gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const coord = { lat: position.coords.latitude, lng: position.coords.longitude };
+        // Use seekProgress to snap to nearest route point
+        const geom = state.activeRoute?.geometry;
+        if (geom && geom.length > 1) {
+          let minDist = Infinity;
+          let bestIdx = 0;
+          for (let i = 0; i < geom.length; i++) {
+            const d = Math.hypot(geom[i][0] - coord.lng, geom[i][1] - coord.lat);
+            if (d < minDist) { minDist = d; bestIdx = i; }
+          }
+          const progress = bestIdx / (geom.length - 1);
+          seekProgress(progress);
+        }
+      },
+      () => { /* GPS error — silent */ },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+    );
+
+    return () => {
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+        gpsWatchIdRef.current = null;
+      }
+    };
+  }, [isNavigating, state.isReplaying, state.activeRoute]);
+
+  // TTS: Speak maneuver instruction when navigation begins or when maneuver index changes
+  useEffect(() => {
+    if (!isNavigating) {
+      prevManeuverIdxRef.current = -1;
+      setIsNavStepsOpen(false);
+      stopTTS();
+      return;
+    }
+
+    if (state.currentManeuverIndex !== prevManeuverIdxRef.current) {
+      prevManeuverIdxRef.current = state.currentManeuverIndex;
+      const maneuver = state.activeRoute?.maneuvers?.[state.currentManeuverIndex];
+      if (maneuver?.instruction) {
+        speakNavInstruction(maneuver.instruction);
+      }
+    }
+  }, [state.currentManeuverIndex, isNavigating, state.activeRoute]);
 
   // Handlers
   const handleSelectSuggestion = (place: Destination) => {
@@ -238,7 +327,7 @@ export const GoogleMapsLayout: React.FC = () => {
       {/* 1. GOOGLE MAPS FLOATING TOP-LEFT DOCKED CONTAINER                         */}
       {/* ========================================================================= */}
       {!isNavigating && (
-        <div className="absolute top-3 left-3 sm:top-4 sm:left-4 z-30 w-[calc(100vw-24px)] sm:w-[410px] flex flex-col gap-2 pointer-events-none">
+        <div className="absolute top-3 left-2 sm:top-4 sm:left-4 z-30 w-[calc(100vw-16px)] sm:w-[410px] flex flex-col gap-1.5 sm:gap-2 pointer-events-none">
           
           {/* Surrounding GPS Location Status Badge */}
           <div className={`pointer-events-auto px-3.5 py-1.5 rounded-full border shadow-sm flex items-center justify-between text-xs font-semibold transition-all backdrop-blur-md ${
@@ -325,40 +414,83 @@ export const GoogleMapsLayout: React.FC = () => {
               </div>
             ) : (
               /* B. GOOGLE MAPS DIRECTIONS INPUT MODE: CORNER-FREE GLASS PANEL */
-              <div className="p-4 flex flex-col gap-3">
-                {/* Travel Mode Selector Tabs */}
-                <div className="flex items-center justify-between border-b pb-2.5 border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center gap-1.5">
-                    {(["driving", "transit", "walking", "cycling"] as TravelMode[]).map((mode) => (
+              <div>
+                {/* Mobile Collapsed Bar: Takes only 44px when routes are calculated */}
+                {state.routes.length > 0 && isMobileDirectionsCollapsed && (
+                  <div className="flex sm:hidden items-center justify-between px-3.5 py-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
                       <button
-                        key={mode}
-                        onClick={() => setActiveTravelMode(mode)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold capitalize flex items-center gap-1.5 transition-all ${
-                          activeTravelMode === mode
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : isLight
-                              ? "text-slate-600 hover:bg-slate-100"
-                              : "text-slate-400 hover:bg-slate-800"
-                        }`}
+                        onClick={() => {
+                          setIsDirectionsMode(false);
+                          resetJourney();
+                        }}
+                        className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 shrink-0"
+                        title="Back to search"
                       >
-                        {mode === "driving" && <Car className="w-3.5 h-3.5" />}
-                        {mode === "walking" && <Navigation className="w-3.5 h-3.5" />}
-                        {mode === "cycling" && <Compass className="w-3.5 h-3.5" />}
-                        {mode}
+                        <ArrowLeft className="w-4 h-4" />
                       </button>
-                    ))}
+                      <div className="truncate text-xs font-bold text-slate-800 dark:text-slate-100">
+                        <span>{state.origin?.name?.split(",")[0] || "Nagpur"}</span>
+                        <span className="text-slate-400 mx-1.5 font-normal">→</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-bold">{state.destination?.name?.split(",")[0] || "Destination"}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => setIsMobileDirectionsCollapsed(false)}
+                        className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 border border-slate-200 dark:border-slate-700"
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      setIsDirectionsMode(false);
-                      if (state.routes.length === 0) resetJourney();
-                    }}
-                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 transition-colors"
-                    title="Close directions"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+                )}
+
+                {/* Full Directions Form: Always visible on desktop (sm:flex), collapsible on mobile */}
+                <div className={`p-4 flex-col gap-3 ${state.routes.length > 0 && isMobileDirectionsCollapsed ? "hidden sm:flex" : "flex"}`}>
+                  {/* Travel Mode Selector Tabs */}
+                  <div className="flex items-center justify-between border-b pb-2.5 border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      {(["driving", "transit", "walking", "cycling"] as TravelMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setActiveTravelMode(mode)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold capitalize flex items-center gap-1.5 transition-all ${
+                            activeTravelMode === mode
+                              ? "bg-blue-600 text-white shadow-sm"
+                              : isLight
+                                ? "text-slate-600 hover:bg-slate-100"
+                                : "text-slate-400 hover:bg-slate-800"
+                          }`}
+                        >
+                          {mode === "driving" && <Car className="w-3.5 h-3.5" />}
+                          {mode === "walking" && <Navigation className="w-3.5 h-3.5" />}
+                          {mode === "cycling" && <Compass className="w-3.5 h-3.5" />}
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {state.routes.length > 0 && (
+                        <button
+                          onClick={() => setIsMobileDirectionsCollapsed(true)}
+                          className="sm:hidden px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full"
+                        >
+                          Hide
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setIsDirectionsMode(false);
+                          if (state.routes.length === 0) resetJourney();
+                        }}
+                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 transition-colors"
+                        title="Close directions"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
 
                 {/* Origin & Destination Inputs + Swap Icon */}
                 <div className="relative flex flex-col gap-2.5 pl-6">
@@ -491,6 +623,7 @@ export const GoogleMapsLayout: React.FC = () => {
                   </button>
                 </div>
               </div>
+              </div>
             )}
           </div>
 
@@ -545,7 +678,7 @@ export const GoogleMapsLayout: React.FC = () => {
 
           {/* Docked Left Drawer: AI Traffic Route Recommendation Portfolio (10 Distinct Routes) */}
           {state.routes.length > 0 && isDirectionsMode && (
-            <div className={`pointer-events-auto rounded-[28px] shadow-2xl border p-4 flex flex-col gap-3 max-h-[calc(100vh-270px)] overflow-y-auto ${
+            <div className={`pointer-events-auto rounded-2xl shadow-2xl border p-3 sm:p-4 flex flex-col gap-2.5 sm:gap-3 max-h-[45vh] sm:max-h-[calc(100vh-270px)] overflow-y-auto ${
               isLight ? "bg-white/95 border-slate-200/90 text-slate-800" : "bg-[#1e293b]/95 border-slate-700/80 text-white"
             } backdrop-blur-xl`}>
               
@@ -622,7 +755,9 @@ export const GoogleMapsLayout: React.FC = () => {
                     <div
                       key={route.id}
                       onClick={() => selectRoute(route.id)}
-                      className={`p-3.5 rounded-[20px] border cursor-pointer transition-all ${
+                      className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl border cursor-pointer transition-all ${
+                        !isSelected && !isMobileRoutesExpanded ? "hidden sm:block" : "block"
+                      } ${
                         isSelected
                           ? isAiPick
                             ? "bg-emerald-500/10 border-emerald-500 shadow-md ring-1 ring-emerald-500/80"
@@ -702,64 +837,304 @@ export const GoogleMapsLayout: React.FC = () => {
                             Fluid corridor · {route.trafficCongestionIndex || 18}% congestion
                           </span>
                         )}
+                      </div>
 
-                        {route.recommendationReason && (
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 w-full">
-                            ✨ {route.recommendationReason}
-                          </p>
+                      {/* Enhanced AI Traffic Intelligence */}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        {route.estimatedSpeedDropZones && route.estimatedSpeedDropZones.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[9px] font-bold border border-orange-500/20">
+                            ⚡ {route.estimatedSpeedDropZones[0]}
+                          </span>
+                        )}
+                        {route.signalWaitEstimate && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-bold border border-sky-500/20">
+                            🚦 {route.signalWaitEstimate}
+                          </span>
+                        )}
+                        {route.peakHourImpact && (
+                          <span className="px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 text-[9px] font-bold border border-violet-500/20">
+                            🕐 {route.peakHourImpact}
+                          </span>
+                        )}
+                        {route.fuelEfficiencyScore && (
+                          <span className="px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 text-[9px] font-bold border border-teal-500/20">
+                            ⛽ {route.fuelEfficiencyScore}
+                          </span>
                         )}
                       </div>
 
+                      {route.recommendationReason && (
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 w-full">
+                          ✨ {route.recommendationReason}
+                        </p>
+                      )}
+
                       {/* Action buttons if selected */}
                       {isSelected && (
-                        <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startJourney();
-                            }}
-                            className="flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-full text-xs font-bold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
-                          >
-                            <Navigation className="w-3.5 h-3.5 fill-current rotate-45" />
-                            <span>Start Navigation</span>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowSteps(!showSteps);
-                            }}
-                            className={`px-3.5 py-2.5 rounded-full text-xs font-semibold border transition-all ${
-                              isLight ? "border-slate-200 hover:bg-slate-100 text-slate-700" : "border-slate-700 hover:bg-slate-800 text-slate-300"
-                            }`}
-                          >
-                            {showSteps ? "Hide Steps" : "Steps"}
-                          </button>
+                        <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startJourney();
+                              }}
+                              className="flex-1 py-2 sm:py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-full text-xs font-bold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+                            >
+                              <Navigation className="w-3.5 h-3.5 fill-current rotate-45" />
+                              <span>Start Navigation</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowSteps(!showSteps);
+                              }}
+                              className={`px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1 ${
+                                showSteps
+                                  ? "bg-blue-600 border-blue-600 text-white"
+                                  : isLight
+                                    ? "border-slate-200 hover:bg-slate-100 text-slate-700"
+                                    : "border-slate-700 hover:bg-slate-800 text-slate-300"
+                              }`}
+                            >
+                              <span>{showSteps ? "Hide" : "Steps"}</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowTrafficIntel(!showTrafficIntel);
+                              }}
+                              className={`px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                                showTrafficIntel
+                                  ? "bg-amber-600 border-amber-600 text-white shadow-sm"
+                                  : isLight
+                                    ? "border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900"
+                                    : "border-amber-800/80 bg-amber-950/40 text-amber-300"
+                              }`}
+                              title="Highway Capacity Manual & Real-time Traffic Intelligence"
+                            >
+                              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                              <span>{showTrafficIntel ? "Hide Intel" : "Traffic Intel"}</span>
+                              {route.realisticTraffic && (
+                                <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/15">
+                                  {route.realisticTraffic.levelOfService}
+                                </span>
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Realistic AI Traffic Intelligence Diagnostics Panel */}
+                          {showTrafficIntel && route.realisticTraffic && (
+                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex flex-col gap-2.5 animate-in fade-in slide-in-from-top-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                  <Activity className="w-3 h-3 text-amber-500" />
+                                  <span>Highway Capacity (HCM) Analytics</span>
+                                </span>
+                                <span
+                                  className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                    route.realisticTraffic.levelOfService === "LOS A" || route.realisticTraffic.levelOfService === "LOS B"
+                                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                                      : route.realisticTraffic.levelOfService === "LOS C"
+                                        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                                        : route.realisticTraffic.levelOfService === "LOS D"
+                                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                          : "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+                                  }`}
+                                >
+                                  {route.realisticTraffic.levelOfService} · {route.realisticTraffic.congestionIndex}% Congestion
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] leading-snug text-slate-600 dark:text-slate-300 italic bg-slate-50 dark:bg-slate-800/80 p-2 rounded-lg border border-slate-100 dark:border-slate-700/60">
+                                &ldquo;{route.realisticTraffic.levelOfServiceDescription}&rdquo;
+                              </p>
+
+                              {/* Speed Degradation & Signal Matrix */}
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
+                                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60">
+                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Flow Speed</span>
+                                  <span className="text-xs font-black text-slate-800 dark:text-slate-100">
+                                    {route.realisticTraffic.averageSpeedKmh} km/h
+                                  </span>
+                                  <span className="text-[9px] text-rose-500 block font-semibold">
+                                    -{route.realisticTraffic.speedDropPercent}% vs free
+                                  </span>
+                                </div>
+                                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60">
+                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Signal Wait</span>
+                                  <span className="text-xs font-black text-slate-800 dark:text-slate-100">
+                                    {route.realisticTraffic.signalizedIntersections} Signals
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block font-semibold">
+                                    ~{Math.round((route.realisticTraffic.signalizedIntersections * route.realisticTraffic.averageSignalWaitSeconds) / 60)}m delay
+                                  </span>
+                                </div>
+                                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60">
+                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Green Wave</span>
+                                  <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                                    {route.realisticTraffic.greenWaveScorePercent}%
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block font-semibold">Coordination</span>
+                                </div>
+                                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60">
+                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Queue Net</span>
+                                  <span className="text-xs font-black text-amber-600 dark:text-amber-400">
+                                    {route.realisticTraffic.totalQueueLengthMeters}m
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block font-semibold">
+                                    +{route.realisticTraffic.totalDelayMinutes}m delay
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Predictive Smart Departure Forecaster */}
+                              <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-gradient-to-br from-slate-50 to-blue-50/40 dark:from-slate-800/70 dark:to-blue-950/20 border border-blue-100 dark:border-blue-900/40">
+                                <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                                  <Clock className="w-3 h-3" />
+                                  <span>AI Smart Departure Time Optimizer</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1.5 mt-0.5">
+                                  {route.realisticTraffic.departurePredictions.map((dep, dIdx) => (
+                                    <div
+                                      key={dIdx}
+                                      className={`p-1.5 rounded-lg border text-center flex flex-col justify-between ${
+                                        dep.isOptimal
+                                          ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/30"
+                                          : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                                      }`}
+                                    >
+                                      <div>
+                                        <span className="text-[10px] font-bold block">{dep.departureLabel}</span>
+                                        <span className="text-xs font-black block">{dep.etaMinutes} min</span>
+                                      </div>
+                                      <span className="text-[8.5px] mt-1 line-clamp-1 opacity-80">{dep.savingsDescription}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Active Geographic Bottlenecks on this Route */}
+                              {route.realisticTraffic.bottlenecks.length > 0 && (
+                                <div className="flex flex-col gap-1.5">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                    <span>Active Bottlenecks on Corridor ({route.realisticTraffic.bottlenecks.length})</span>
+                                  </span>
+                                  <div className="flex flex-col gap-1 max-h-36 overflow-y-auto pr-1">
+                                    {route.realisticTraffic.bottlenecks.map((b) => (
+                                      <div
+                                        key={b.id}
+                                        className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex flex-col gap-1"
+                                      >
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">
+                                            {b.name}
+                                          </span>
+                                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                            {b.currentSpeedKmh} km/h · {b.levelOfService}
+                                          </span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                                          {b.cause} • Queue: ~{b.queueLengthMeters}m (+{b.delayMinutes}m delay)
+                                        </p>
+                                        <p className="text-[9.5px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/30 px-1.5 py-0.5 rounded">
+                                          💡 {b.aiDirective}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Fuel & Carbon Penalty */}
+                              <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                <span className="flex items-center gap-1">
+                                  <Leaf className="w-3 h-3 text-emerald-500" />
+                                  <span>Stop-and-Go Penalty: +{route.realisticTraffic.carbonPenaltyKg} kg CO₂</span>
+                                </span>
+                                <span>Efficiency: {route.realisticTraffic.fuelEfficiencyScore}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Turn-by-Turn Steps Accordion directly inside selected card */}
+                          {showSteps && (
+                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex flex-col gap-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                  Turn-by-Turn Maneuvers ({route.maneuvers?.length || 0})
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const firstInstruction = route.maneuvers?.[0]?.instruction || "Continue on current corridor";
+                                    speakNavInstruction(firstInstruction);
+                                  }}
+                                  className="text-[10px] text-blue-600 dark:text-blue-400 font-bold flex items-center gap-1 hover:underline active:scale-95"
+                                  title="Preview Voice Navigation"
+                                >
+                                  <Volume2 className="w-3 h-3" />
+                                  <span>Preview Voice</span>
+                                </button>
+                              </div>
+                              {route.maneuvers && route.maneuvers.length > 0 ? (
+                                <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto pr-1">
+                                  {route.maneuvers.map((step, sIdx) => (
+                                    <div
+                                      key={sIdx}
+                                      className="flex items-start gap-2 text-xs p-2 rounded-lg bg-slate-50/90 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60"
+                                    >
+                                      <div className="w-5 h-5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 text-[9px] font-black">
+                                        {sIdx + 1}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-slate-800 dark:text-slate-100 text-[11px] leading-snug">
+                                          {step.instruction}
+                                        </p>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                          <p className="text-[10px] text-slate-400 font-medium">
+                                            {formatDistance(step.distanceMeters)}
+                                          </p>
+                                          {step.roadName && (
+                                            <p className="text-[10px] text-slate-400 truncate">· {step.roadName}</p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-slate-400 italic py-1">Calculating street maneuvers...</p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   );
                 })}
-              </div>
 
-              {/* Step-by-Step Maneuvers Drawer */}
-              {showSteps && activeRoute?.maneuvers && (
-                <div className="mt-2 border-t pt-2.5 border-slate-200 dark:border-slate-800 flex flex-col gap-2">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Turn-by-Turn Steps</h4>
-                  <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
-                    {activeRoute.maneuvers.map((step, idx) => (
-                      <div key={idx} className="flex items-start gap-2.5 text-xs p-2 rounded-xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
-                        <div className="w-5 h-5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
-                          <CornerUpRight className="w-3 h-3" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">{step.instruction}</p>
-                          <p className="text-[10px] text-slate-400">{formatDistance(step.distanceMeters)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                {/* Mobile Expand / Collapse Button for 10 Candidate Routes */}
+                {displayedRoutes.length > 1 && !isMobileRoutesExpanded && (
+                  <button
+                    onClick={() => setIsMobileRoutesExpanded(true)}
+                    className="sm:hidden w-full py-2 px-3 rounded-xl text-xs font-bold text-center bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                  >
+                    <span>View all {displayedRoutes.length} candidate routes</span>
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {displayedRoutes.length > 1 && isMobileRoutesExpanded && (
+                  <button
+                    onClick={() => setIsMobileRoutesExpanded(false)}
+                    className="sm:hidden w-full py-2 px-3 rounded-xl text-xs font-bold text-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 flex items-center justify-center gap-1.5 transition-all"
+                  >
+                    <span>Collapse to top route</span>
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
               {/* Quick Congestion Simulator for Live Agent Demonstration */}
               <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
@@ -880,58 +1255,175 @@ export const GoogleMapsLayout: React.FC = () => {
           )}
 
           {/* Bottom Navigation Bar */}
-          <div className="absolute bottom-4 left-3 right-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[540px] z-30 pointer-events-auto">
-            <div className={`rounded-2xl shadow-2xl border p-3.5 flex items-center justify-between gap-3 ${
+          <div className="absolute bottom-3 left-2 right-2 sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-[540px] z-30 pointer-events-auto">
+            <div className={`rounded-2xl shadow-2xl border p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3 ${
               isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#1e293b] border-slate-700 text-white"
             } backdrop-blur-md`}>
               
               {/* ETA and metrics */}
-              <div className="flex items-center gap-3">
-                <div className="text-center">
-                  <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 leading-none">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <div className="text-center shrink-0">
+                  <p className="text-lg sm:text-xl font-black text-emerald-600 dark:text-emerald-400 leading-none">
                     {formatDuration(activeRoute?.predictedDurationSeconds || 3600)}
                   </p>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Remaining</p>
+                  <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase mt-0.5">Remaining</p>
                 </div>
-                <div className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-                <div>
-                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">
                     {formatDistance(activeRoute?.distanceMeters || 45000)}
                   </p>
-                  <p className="text-[11px] text-slate-400">
-                    Est. Arrival 2:45 PM
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
+                    Est. Arrival {new Date(Date.now() + (activeRoute?.predictedDurationSeconds || 3600) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </p>
                 </div>
               </div>
 
-              {/* Automated Replay Controls */}
-              <div className="flex items-center gap-2">
+              {/* Navigation Controls */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {/* TTS Mute Toggle */}
+                <button
+                  onClick={() => setIsMuted(toggleTTSMute())}
+                  className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all active:scale-95 ${
+                    isMuted
+                      ? "bg-red-500/15 text-red-500"
+                      : "bg-emerald-500/15 text-emerald-500"
+                  }`}
+                  title={isMuted ? "Unmute Voice Navigation" : "Mute Voice Navigation"}
+                >
+                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+
+                {/* Voice Cast Toggle */}
+                <button
+                  onClick={handleToggleVoiceCast}
+                  className="px-2 py-1.5 rounded-full text-[10px] font-black border flex items-center gap-1 transition-all active:scale-95 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                  title={`Voice Cast: ${voiceCast === "american" ? "American Copilot (US English)" : "Sarvam AI (bulbul:v3)"}. Click to switch.`}
+                >
+                  <span>{voiceCast === "american" ? "🇺🇸 US" : "🇮🇳 Sarvam"}</span>
+                </button>
+
+                {/* Turn-by-Turn Steps Modal Toggle */}
+                <button
+                  onClick={() => setIsNavStepsOpen(!isNavStepsOpen)}
+                  className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-1 transition-all active:scale-95 border ${
+                    isNavStepsOpen
+                      ? "bg-blue-600 border-blue-600 text-white shadow-sm"
+                      : isLight
+                        ? "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                  }`}
+                  title="View All Turn-by-Turn Steps"
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Steps</span>
+                </button>
+
+                {/* Simulate Drive Toggle */}
                 <button
                   onClick={() => toggleReplay()}
-                  className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-200 active:scale-95"
-                  title={state.isReplaying ? "Pause Drive Simulation" : "Resume Drive Simulation"}
+                  className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-1 transition-all active:scale-95 border ${
+                    state.isReplaying
+                      ? "bg-amber-500 border-amber-500 text-white shadow-sm"
+                      : isLight
+                        ? "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                  }`}
+                  title={state.isReplaying ? "Pause Drive Simulation" : "Start Drive Simulation"}
                 >
-                  {state.isReplaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  {state.isReplaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                  <span className="hidden sm:inline">{state.isReplaying ? "Simulating" : "Simulate"}</span>
                 </button>
                 
-                <button
-                  onClick={() => setReplaySpeed(state.replaySpeed === 1 ? 2 : state.replaySpeed === 2 ? 5 : 1)}
-                  className="px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                  title="Simulation Speed"
-                >
-                  {state.replaySpeed || 1}x
-                </button>
+                {state.isReplaying && (
+                  <button
+                    onClick={() => setReplaySpeed(state.replaySpeed === 1 ? 2 : state.replaySpeed === 2 ? 5 : 1)}
+                    className="px-1.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                    title="Simulation Speed"
+                  >
+                    {state.replaySpeed || 1}x
+                  </button>
+                )}
 
                 {/* Exit Navigation */}
                 <button
                   onClick={resetJourney}
-                  className="w-9 h-9 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-md active:scale-95 transition-all"
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-md active:scale-95 transition-all"
                   title="Exit Navigation"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
+
+            {/* In-Navigation Turn-by-Turn Steps Sheet */}
+            {isNavStepsOpen && (
+              <div className="mt-2 rounded-2xl shadow-2xl border p-3 sm:p-4 max-h-64 overflow-y-auto backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 bg-white/95 dark:bg-[#1e293b]/95 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white flex flex-col gap-2">
+                <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                      Route Maneuvers
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Step {state.currentManeuverIndex + 1} of {activeRoute?.maneuvers?.length || 0}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setIsNavStepsOpen(false)}
+                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  {activeRoute?.maneuvers?.map((step, idx) => {
+                    const isCurrent = idx === state.currentManeuverIndex;
+                    const isPast = idx < state.currentManeuverIndex;
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-start gap-2.5 p-2 rounded-xl border transition-all ${
+                          isCurrent
+                            ? "bg-emerald-500/15 border-emerald-500/60 ring-1 ring-emerald-500/60"
+                            : isPast
+                              ? "opacity-50 border-transparent bg-slate-50/50 dark:bg-slate-800/30"
+                              : isLight
+                                ? "bg-slate-50 border-slate-200/60"
+                                : "bg-slate-800/60 border-slate-700/60"
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-[9px] font-black ${
+                          isCurrent
+                            ? "bg-emerald-500 text-white"
+                            : isPast
+                              ? "bg-slate-300 dark:bg-slate-700 text-slate-500"
+                              : "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                        }`}>
+                          {idx + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[11px] leading-snug font-bold ${isCurrent ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+                            {step.instruction}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5 text-[9px] text-slate-400 font-medium">
+                            <span>{formatDistance(step.distanceMeters)}</span>
+                            {step.roadName && <span>· {step.roadName}</span>}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => speakNavInstruction(step.instruction)}
+                          className="p-1 text-slate-400 hover:text-emerald-500 transition-colors"
+                          title="Speak instruction"
+                        >
+                          <Volume2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -1026,6 +1518,19 @@ export const GoogleMapsLayout: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Voice Cast Selector (Top Right) */}
+      <button
+        onClick={handleToggleVoiceCast}
+        className={`absolute top-4 right-16 z-30 px-3 h-10 rounded-full flex items-center justify-center gap-1.5 shadow-md border text-xs font-bold transition-all active:scale-95 pointer-events-auto ${
+          isLight
+            ? "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+            : "bg-slate-900 border-slate-700 text-white hover:bg-slate-800"
+        }`}
+        title={`Current Voice: ${voiceCast === "american" ? "American Navigation Voice (en-US)" : "Sarvam AI (bulbul:v3)"}. Click to switch.`}
+      >
+        <span>{voiceCast === "american" ? "🇺🇸 US Voice" : "🇮🇳 Sarvam AI"}</span>
+      </button>
 
       {/* Theme Toggle Button (Top Right corner) */}
       <button

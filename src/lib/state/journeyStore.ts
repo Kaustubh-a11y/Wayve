@@ -108,7 +108,7 @@ const initialPreferences: JourneyPreferences = {
 
 // Global in-memory state object
 let globalStore: JourneyStoreState = {
-  theme: "dark",
+  theme: "light",
   mapViewMode: "3d",
   planningStep: "destination",
   journeyState: "IDLE",
@@ -195,7 +195,7 @@ export function useJourneyStore() {
       if (savedTheme) {
         journeyActions.setTheme(savedTheme);
       } else {
-        journeyActions.setTheme("dark");
+        journeyActions.setTheme("light");
       }
 
       const savedView = localStorage.getItem("wayve_map_view") as MapViewMode | null;
@@ -319,7 +319,7 @@ export function useJourneyStore() {
         routeProgress: 0.02,
         elapsedSeconds: 0,
         bearing: initialBearing,
-        isReplaying: true,
+        isReplaying: false,
         replaySpeed: 1,
       });
     },
