@@ -5,6 +5,7 @@ import mapboxgl from "mapbox-gl";
 import { useJourneyStore } from "@/lib/state/journeyStore";
 import { MapViewMode } from "@/types/journey";
 import { Compass, Eye, Layers, Minus, Navigation2, Plus } from "lucide-react";
+import { NAGPUR_AMBIENT_TRAFFIC_GEOJSON } from "@/lib/services/trafficData";
 
 // Google Maps-like zero-config raster styles (works 100% reliably worldwide with 0 API tokens!)
 const GOOGLE_STYLE_LIGHT: any = {
@@ -67,8 +68,9 @@ export const MapCanvas: React.FC = () => {
   const destMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const incidentMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const stopMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const routeDurationMarkersRef = useRef<mapboxgl.Marker[]>([]);
 
-  const { state, selectRoute, setMapViewMode } = useJourneyStore();
+  const { state, selectRoute, setMapViewMode, toggleTrafficLayer } = useJourneyStore();
   const [mapLoaded, setMapLoaded] = useState(false);
 
   const isLight = state.theme === "light";
@@ -182,10 +184,87 @@ export const MapCanvas: React.FC = () => {
     }
   }, [state.mapViewMode, isLight, mapLoaded]);
 
-  // Update Route Polyline Layers (Google Maps Blue #1a73e8 + Alternatives #9aa0a6)
+  // Ambient Live Highway Traffic Overlay (Nagpur NH 44, NH 53, Samruddhi Expressway, ORR)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
+
+    const ensureTrafficLayer = () => {
+      try {
+        if (!map.getSource("nagpur-ambient-traffic")) {
+          map.addSource("nagpur-ambient-traffic", {
+            type: "geojson",
+            data: NAGPUR_AMBIENT_TRAFFIC_GEOJSON as any,
+          });
+        }
+
+        if (!map.getLayer("ambient-traffic-casing")) {
+          map.addLayer({
+            id: "ambient-traffic-casing",
+            type: "line",
+            source: "nagpur-ambient-traffic",
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+              visibility: state.isTrafficLayerVisible ? "visible" : "none",
+            },
+            paint: {
+              "line-color": isLight ? "#ffffff" : "#0f172a",
+              "line-width": 6,
+              "line-opacity": 0.45,
+            },
+          });
+        } else {
+          map.setLayoutProperty("ambient-traffic-casing", "visibility", state.isTrafficLayerVisible ? "visible" : "none");
+          map.setPaintProperty("ambient-traffic-casing", "line-color", isLight ? "#ffffff" : "#0f172a");
+        }
+
+        if (!map.getLayer("ambient-traffic-flow")) {
+          map.addLayer({
+            id: "ambient-traffic-flow",
+            type: "line",
+            source: "nagpur-ambient-traffic",
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+              visibility: state.isTrafficLayerVisible ? "visible" : "none",
+            },
+            paint: {
+              "line-color": [
+                "match",
+                ["get", "congestion"],
+                "severe", "#a50e0e",
+                "heavy", "#db4437",
+                "moderate", "#f4b400",
+                /* default / low */ "#0f9d58"
+              ],
+              "line-width": 3.5,
+              "line-opacity": 0.92,
+            },
+          });
+        } else {
+          map.setLayoutProperty("ambient-traffic-flow", "visibility", state.isTrafficLayerVisible ? "visible" : "none");
+        }
+      } catch (err) {
+        console.warn("[Ambient Traffic Layer Note]", err);
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      ensureTrafficLayer();
+    } else {
+      map.once("style.load", ensureTrafficLayer);
+    }
+  }, [state.isTrafficLayerVisible, isLight, mapLoaded, state.mapViewMode]);
+
+  // Update Route Polyline Layers (Multi-Colored Traffic Flow Segments + Google Maps Styling)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    // Clear previous floating route badges
+    routeDurationMarkersRef.current.forEach((m) => m.remove());
+    routeDurationMarkersRef.current = [];
 
     ["route-alt-casing-1", "route-alt-line-1", "route-alt-casing-2", "route-alt-line-2", "route-active-casing", "route-active-line"].forEach((id) => {
       if (map.getLayer(id)) map.removeLayer(id);
@@ -196,7 +275,7 @@ export const MapCanvas: React.FC = () => {
 
     if (!state.routes || state.routes.length === 0) return;
 
-    // Draw Alternative Routes first
+    // 1. Draw Alternative Routes first (muted Google Maps gray with on-route duration badges)
     const alternatives = state.routes.filter((r) => r.id !== state.selectedRouteId);
     alternatives.forEach((alt, idx) => {
       const sourceId = `routes-alt-source-${idx + 1}`;
@@ -220,7 +299,7 @@ export const MapCanvas: React.FC = () => {
         paint: {
           "line-color": isLight ? "#5f6368" : "#3c4043",
           "line-width": 8,
-          "line-opacity": 0.4,
+          "line-opacity": 0.35,
         },
       });
 
@@ -239,24 +318,87 @@ export const MapCanvas: React.FC = () => {
       map.on("click", `route-alt-line-${idx + 1}`, () => {
         selectRoute(alt.id);
       });
+
+      // Floating duration badge on alternative route
+      if (alt.geometry && alt.geometry.length > 0) {
+        const altMidIdx = Math.min(Math.floor(alt.geometry.length * (0.4 + idx * 0.15)), alt.geometry.length - 1);
+        const altMidCoord = alt.geometry[altMidIdx];
+        const altDurMin = Math.round((alt.predictedDurationSeconds || alt.durationSeconds) / 60);
+
+        const altBadgeEl = document.createElement("div");
+        altBadgeEl.className = "cursor-pointer select-none transition-transform hover:scale-105 active:scale-95";
+        altBadgeEl.innerHTML = `
+          <div style="
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 9px;
+            border-radius: 999px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            background: ${isLight ? "rgba(255,255,255,0.95)" : "rgba(30,41,59,0.95)"};
+            color: ${isLight ? "#5f6368" : "#94a3b8"};
+            border: 1.5px solid ${isLight ? "#dadce0" : "#475569"};
+            white-space: nowrap;
+          ">
+            <span>${altDurMin} min</span>
+          </div>
+        `;
+        altBadgeEl.onclick = (e) => {
+          e.stopPropagation();
+          selectRoute(alt.id);
+        };
+
+        const altMarker = new mapboxgl.Marker({ element: altBadgeEl, anchor: "center" })
+          .setLngLat(altMidCoord)
+          .addTo(map);
+        routeDurationMarkersRef.current.push(altMarker);
+      }
     });
 
-    // Draw Active Selected Route (Iconic Google Maps Blue)
+    // 2. Draw Active Selected Route (Segmented Traffic Colors: Blue/Green -> Amber -> Red)
     const active = state.routes.find((r) => r.id === state.selectedRouteId) || state.routes[0];
     if (active && active.geometry.length > 0) {
+      // Build GeoJSON features for each segmented traffic chunk
+      const features: any[] = (active.trafficSegments && active.trafficSegments.length > 0)
+        ? active.trafficSegments.map((seg, sIdx) => ({
+            type: "Feature",
+            properties: {
+              id: `${active.id}-${sIdx}`,
+              congestion: seg.congestion,
+              roadName: seg.roadName || "",
+              speedKmh: seg.speedKmh || 50,
+            },
+            geometry: {
+              type: "LineString",
+              coordinates: seg.coordinates,
+            },
+          }))
+        : [
+            {
+              type: "Feature",
+              properties: {
+                id: active.id,
+                congestion: active.trafficCondition || "low",
+              },
+              geometry: {
+                type: "LineString",
+                coordinates: active.geometry,
+              },
+            },
+          ];
+
       map.addSource("routes-active-source", {
         type: "geojson",
         data: {
-          type: "Feature",
-          properties: { id: active.id },
-          geometry: {
-            type: "LineString",
-            coordinates: active.geometry,
-          },
+          type: "FeatureCollection",
+          features,
         },
       });
 
-      // Dark blue casing for contrast
+      // Dark blue / deep outline for contrast
       map.addLayer({
         id: "route-active-casing",
         type: "line",
@@ -265,22 +407,63 @@ export const MapCanvas: React.FC = () => {
         paint: {
           "line-color": isLight ? "#1557b0" : "#174ea6",
           "line-width": 10,
-          "line-opacity": 0.9,
+          "line-opacity": 0.95,
         },
       });
 
-      // Primary Route Line
+      // Primary Segmented Traffic Flow Line
       map.addLayer({
         id: "route-active-line",
         type: "line",
         source: "routes-active-source",
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
-          "line-color": active.trafficCondition === "heavy" ? "#d93025" : active.isWayvePick ? "#10b981" : "#1a73e8",
-          "line-width": 6,
+          "line-color": [
+            "match",
+            ["get", "congestion"],
+            "severe", "#a50e0e",
+            "heavy", "#d93025",
+            "moderate", "#f29900",
+            /* default / low flow */ active.isWayvePick ? "#10b981" : "#1a73e8"
+          ],
+          "line-width": 6.5,
           "line-opacity": 1.0,
         },
       });
+
+      // Floating on-route duration badge for active route
+      const midIdx = Math.min(Math.floor(active.geometry.length * 0.45), active.geometry.length - 1);
+      const midCoord = active.geometry[midIdx];
+      const durMin = Math.round((active.predictedDurationSeconds || active.durationSeconds) / 60);
+
+      const activeBadgeEl = document.createElement("div");
+      activeBadgeEl.className = "cursor-pointer select-none transition-transform hover:scale-105 active:scale-95";
+      activeBadgeEl.innerHTML = `
+        <div style="
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px 11px;
+          border-radius: 999px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 12px;
+          font-weight: 800;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+          background: ${isLight ? "#ffffff" : "#1e293b"};
+          color: ${isLight ? "#202124" : "#f8fafc"};
+          border: 2px solid ${active.isWayvePick ? "#10b981" : "#1a73e8"};
+          white-space: nowrap;
+        ">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: ${active.trafficCondition === "heavy" ? "#d93025" : active.trafficCondition === "moderate" ? "#f29900" : "#10b981"};"></span>
+          <span>${durMin} min</span>
+          <span style="font-size: 10px; opacity: 0.8; font-weight: 600;">${active.isWayvePick ? "· AI Pick" : "· Fastest"}</span>
+        </div>
+      `;
+
+      const activeMarker = new mapboxgl.Marker({ element: activeBadgeEl, anchor: "center" })
+        .setLngLat(midCoord)
+        .addTo(map);
+      routeDurationMarkersRef.current.push(activeMarker);
 
       // Fit bounds to entire route
       if (state.journeyState === "ROUTES_READY" || state.journeyState === "AWAITING_CONFIRMATION" || state.journeyState === "IDLE") {
@@ -458,28 +641,47 @@ export const MapCanvas: React.FC = () => {
         className="w-full h-full"
       />
 
-      {/* Floating Map View Selector [ 2D | 3D | Satellite ] — Bottom Right */}
-      <div className="absolute right-4 bottom-8 z-20 flex flex-col gap-1.5 pointer-events-auto">
-        {(["3d", "2d", "satellite"] as MapViewMode[]).map((mode) => {
-          const isSelected = state.mapViewMode === mode;
-          const label = mode === "satellite" ? "🛰" : mode.toUpperCase();
-          return (
-            <button
-              key={mode}
-              onClick={() => setMapViewMode(mode)}
-              className={`w-12 h-10 rounded-xl text-xs font-bold uppercase tracking-wide transition-all active:scale-95 shadow-md border ${
-                isSelected
-                  ? "bg-emerald-500 border-emerald-500 text-white shadow-emerald-500/30"
-                  : isLight
-                    ? "bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-50"
-                    : "bg-slate-900/90 border-white/10 text-slate-400 hover:border-white/20 hover:text-white"
-              } backdrop-blur-md`}
-              title={`Switch to ${mode} view`}
-            >
-              {label}
-            </button>
-          );
-        })}
+      {/* Floating Map View Selector [ 2D | 3D | Satellite ] & Traffic Layer Toggle — Bottom Right */}
+      <div className="absolute right-4 bottom-8 z-20 flex flex-col gap-2 pointer-events-auto">
+        {/* Live Traffic Toggle Button */}
+        <button
+          onClick={() => toggleTrafficLayer()}
+          className={`w-12 h-10 rounded-xl text-xs font-bold flex items-center justify-center transition-all active:scale-95 shadow-md border ${
+            state.isTrafficLayerVisible
+              ? "bg-amber-500 border-amber-400 text-white shadow-amber-500/30 ring-2 ring-amber-400/40"
+              : isLight
+                ? "bg-white/90 border-slate-200 text-slate-500 hover:bg-slate-50"
+                : "bg-slate-900/90 border-white/10 text-slate-400 hover:border-white/20 hover:text-white"
+          } backdrop-blur-md`}
+          title={state.isTrafficLayerVisible ? "Traffic Layer: ON (Click to hide traffic flow)" : "Traffic Layer: OFF (Click to show live traffic)"}
+          aria-label="Toggle Live Traffic Layer"
+        >
+          <span className="text-sm">🚦</span>
+        </button>
+
+        {/* View Mode Buttons */}
+        <div className="flex flex-col gap-1.5">
+          {(["3d", "2d", "satellite"] as MapViewMode[]).map((mode) => {
+            const isSelected = state.mapViewMode === mode;
+            const label = mode === "satellite" ? "🛰" : mode.toUpperCase();
+            return (
+              <button
+                key={mode}
+                onClick={() => setMapViewMode(mode)}
+                className={`w-12 h-10 rounded-xl text-xs font-bold uppercase tracking-wide transition-all active:scale-95 shadow-md border ${
+                  isSelected
+                    ? "bg-emerald-500 border-emerald-500 text-white shadow-emerald-500/30"
+                    : isLight
+                      ? "bg-white/90 border-slate-200 text-slate-600 hover:bg-slate-50"
+                      : "bg-slate-900/90 border-white/10 text-slate-400 hover:border-white/20 hover:text-white"
+                } backdrop-blur-md`}
+                title={`Switch to ${mode} view`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Right Edge Spatial Zoom & Recenter Controls */}

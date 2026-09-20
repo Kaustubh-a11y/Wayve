@@ -90,6 +90,7 @@ export interface JourneyStoreState {
   demoStep: number;
   isReplaying: boolean;
   replaySpeed: number;
+  isTrafficLayerVisible: boolean;
 }
 
 const initialPreferences: JourneyPreferences = {
@@ -163,6 +164,7 @@ let globalStore: JourneyStoreState = {
   demoStep: 0,
   isReplaying: false,
   replaySpeed: 1,
+  isTrafficLayerVisible: true,
 };
 
 const listeners = new Set<() => void>();
@@ -702,6 +704,8 @@ export function useJourneyStore() {
       updateStore((prev) => ({ isTripIntelligenceOpen: val !== undefined ? val : !prev.isTripIntelligenceOpen })),
     toggleSettings: (val?: boolean) =>
       updateStore((prev) => ({ isSettingsOpen: val !== undefined ? val : !prev.isSettingsOpen })),
+    toggleTrafficLayer: (val?: boolean) =>
+      updateStore((prev) => ({ isTrafficLayerVisible: val !== undefined ? val : !prev.isTrafficLayerVisible })),
   };
 }
 

@@ -1,4 +1,5 @@
 import { Destination, Maneuver, RouteOption, Stop } from "@/types/journey";
+import { synthesizeTrafficSegments } from "./trafficData";
 
 export const DEFAULT_ORIGIN = {
   name: "Nagpur (Your location)",
@@ -212,8 +213,8 @@ export function getDeterministicRoutes(
   return [
     {
       id: "route-scenic-ghat",
-      name: "Old Highway & Scenic Ghat Pass",
-      summary: "via Old NH 48 · Valley viewpoints & canopy roads",
+      name: "NH 44 Express Corridor",
+      summary: "via NH 44 · Primary high-speed corridor with scenic canopy",
       provider: "wayve-fused",
       geometry: geomScenic,
       distanceMeters: 64800,
@@ -221,7 +222,7 @@ export function getDeterministicRoutes(
       predictedDurationSeconds: 4680, // 78 mins with ML prediction
       isWayvePick: true,
       recommendationReason:
-        "Wayve recommends this route because it matches your scenic preference, has lower predicted congestion, and includes your snack stop.",
+        "Wayve recommends this route because it matches your scenic preference, has lower predicted congestion, and includes your requested stop.",
       confidence: 89,
       score: 88,
       scoreBreakdown: {
@@ -233,8 +234,9 @@ export function getDeterministicRoutes(
         tolls: 90,
       },
       trafficCondition: "low",
+      trafficSegments: synthesizeTrafficSegments(geomScenic, "low"),
       weatherCondition: {
-        summary: "Clear · Mild Mountain Breeze",
+        summary: "Clear · Mild Breeze",
         tempC: 24,
         rainProbability: 10,
       },
@@ -242,15 +244,15 @@ export function getDeterministicRoutes(
       maneuvers: DETERMINISTIC_MANEUVERS,
       shapAttribution: [
         { feature: "Low congestion arterial", impactMinutes: 4.8, direction: "decrease" },
-        { feature: "Valley scenery weight", impactMinutes: 0.0, direction: "decrease" },
+        { feature: "Canopy scenery weight", impactMinutes: 0.0, direction: "decrease" },
         { feature: "Clear weather conditions", impactMinutes: 1.5, direction: "decrease" },
         { feature: "Scenic curve speed limit", impactMinutes: 3.2, direction: "increase" },
       ],
     },
     {
       id: "route-expressway",
-      name: "Mumbai-Pune Expressway",
-      summary: "via Yashwantrao Chavan Expressway · Direct corridor",
+      name: "Direct Arterial Bypass",
+      summary: "via Ring Road & State Highway · Direct connection",
       provider: "wayve-fused",
       geometry: geomExpress,
       distanceMeters: 62400,
@@ -269,30 +271,30 @@ export function getDeterministicRoutes(
         tolls: 45,
       },
       trafficCondition: "moderate",
+      trafficSegments: synthesizeTrafficSegments(geomExpress, "moderate"),
       weatherCondition: {
         summary: "Clear · Sunny",
         tempC: 26,
         rainProbability: 15,
       },
-      warnings: ["Heavy container truck traffic near Khalapur toll plaza"],
+      warnings: ["Moderate truck traffic near toll plaza"],
       maneuvers: DETERMINISTIC_MANEUVERS.slice(0, 5),
       shapAttribution: [
-        { feature: "High-speed expressway", impactMinutes: 6.2, direction: "decrease" },
+        { feature: "High-speed corridor", impactMinutes: 6.2, direction: "decrease" },
         { feature: "Toll plaza queue delay", impactMinutes: 4.4, direction: "increase" },
-        { feature: "Corridor merge traffic", impactMinutes: 3.8, direction: "increase" },
       ],
     },
     {
       id: "route-countryside-bypass",
-      name: "Talegaon - Kamshet Country Bypass",
-      summary: "via Pawna Lake Countryside Road · Relaxed cruising",
+      name: "Scenic Lakeside Bypass",
+      summary: "via Scenic Lakeside Corridor · Relaxed cruising",
       provider: "wayve-fused",
       geometry: geomBypass,
       distanceMeters: 67200,
       durationSeconds: 5280, // 88 mins
       predictedDurationSeconds: 5160, // 86 mins
       isWayvePick: false,
-      recommendationReason: "Quiet countryside route with minimal signals and very low stress.",
+      recommendationReason: "Quiet scenic route with minimal signals and very low stress.",
       confidence: 82,
       score: 76,
       scoreBreakdown: {
@@ -304,6 +306,7 @@ export function getDeterministicRoutes(
         tolls: 95,
       },
       trafficCondition: "low",
+      trafficSegments: synthesizeTrafficSegments(geomBypass, "low"),
       weatherCondition: {
         summary: "Partly Cloudy",
         tempC: 23,

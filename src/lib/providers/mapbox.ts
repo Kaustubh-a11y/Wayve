@@ -13,6 +13,7 @@ function getCleanToken(): string {
  * Searches for places/destinations via Mapbox Geocoding API with fallback to deterministic destinations.
  */
 import { getHaversineDistance } from "../services/userLocation";
+import { parseMapboxTrafficAnnotations, synthesizeTrafficSegments } from "../services/trafficData";
 
 export const NAGPUR_SURROUNDING_POIS: Destination[] = [
   {
@@ -383,6 +384,10 @@ export async function getDirections(
                 tolls: 70,
               },
               trafficCondition: isPrimary ? ("moderate" as const) : ("low" as const),
+              trafficSegments: parseMapboxTrafficAnnotations(
+                r.geometry?.coordinates || [],
+                r.legs?.flatMap((l: any) => l.annotation?.congestion || []) || []
+              ),
               weatherCondition: {
                 summary: weather.summary,
                 tempC: weather.tempC,
@@ -492,6 +497,10 @@ export async function getDirections(
               tolls: 75,
             },
             trafficCondition: isPrimary ? ("moderate" as const) : ("low" as const),
+            trafficSegments: synthesizeTrafficSegments(
+              r.geometry?.coordinates || [],
+              isPrimary ? "moderate" : "low"
+            ),
             weatherCondition: {
               summary: weather.summary,
               tempC: weather.tempC,
@@ -559,6 +568,7 @@ export async function getDirections(
       score: 84,
       scoreBreakdown: { eta: 88, traffic: 82, scenic: 70, weather: 85, detour: 90, tolls: 80 },
       trafficCondition: "low",
+      trafficSegments: synthesizeTrafficSegments(coords2, "low"),
       weatherCondition: { summary: "Clear Sky", tempC: 22, rainProbability: 5 },
       warnings: [],
       maneuvers: [
@@ -582,6 +592,7 @@ export async function getDirections(
       score: 89,
       scoreBreakdown: { eta: 78, traffic: 92, scenic: 95, weather: 88, detour: 85, tolls: 88 },
       trafficCondition: "low",
+      trafficSegments: synthesizeTrafficSegments(coords1, "low"),
       weatherCondition: { summary: "Pleasant · Good Visibility", tempC: 21, rainProbability: 0 },
       warnings: [],
       maneuvers: [

@@ -76,6 +76,17 @@ export interface FeatureAttribution {
   direction: "increase" | "decrease";
 }
 
+export type CongestionLevel = "unknown" | "low" | "moderate" | "heavy" | "severe";
+
+export interface RouteSegment {
+  coordinates: [number, number][]; // [lng, lat][]
+  congestion: CongestionLevel;
+  speedKmh?: number;
+  distanceMeters?: number;
+  durationSeconds?: number;
+  roadName?: string;
+}
+
 export interface RouteOption {
   id: string;
   name: string;
@@ -98,6 +109,7 @@ export interface RouteOption {
     tolls: number;
   };
   trafficCondition: "low" | "moderate" | "heavy";
+  trafficSegments?: RouteSegment[];
   weatherCondition: {
     summary: string;
     tempC: number;

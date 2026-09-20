@@ -41,6 +41,7 @@ export const GoogleMapsLayout: React.FC = () => {
     injectSimulationIncident,
     switchRoute,
     stayOnRoute,
+    toggleTrafficLayer,
   } = useJourneyStore();
 
   const isLight = state.theme === "light";
@@ -518,12 +519,26 @@ export const GoogleMapsLayout: React.FC = () => {
                     To {state.destination?.name} {activeStops.length > 0 ? `· via ${activeStops.length} stop(s)` : ""}
                   </p>
                 </div>
-                <button
-                  onClick={() => setJourneyMode(state.journeyMode === "fast" ? "scenic" : "fast")}
-                  className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-200 dark:border-slate-700 uppercase"
-                >
-                  {state.journeyMode} mode
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => toggleTrafficLayer()}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 transition-all ${
+                      state.isTrafficLayerVisible
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                        : "border-slate-200 dark:border-slate-700 text-slate-400"
+                    }`}
+                    title="Toggle Live Traffic on Map"
+                  >
+                    <span>🚦</span>
+                    <span>{state.isTrafficLayerVisible ? "Traffic ON" : "Traffic OFF"}</span>
+                  </button>
+                  <button
+                    onClick={() => setJourneyMode(state.journeyMode === "fast" ? "scenic" : "fast")}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-200 dark:border-slate-700 uppercase"
+                  >
+                    {state.journeyMode}
+                  </button>
+                </div>
               </div>
 
               {/* Route Cards */}
@@ -531,6 +546,8 @@ export const GoogleMapsLayout: React.FC = () => {
                 {state.routes.map((route) => {
                   const isSelected = route.id === (state.selectedRouteId || state.routes[0]?.id);
                   const isAiPick = route.isWayvePick;
+                  const isHeavy = route.trafficCondition === "heavy";
+                  const isModerate = route.trafficCondition === "moderate";
 
                   return (
                     <div
@@ -549,7 +566,13 @@ export const GoogleMapsLayout: React.FC = () => {
                       <div className="flex items-start justify-between">
                         <div>
                           <div className="flex items-center gap-1.5 mb-1">
-                            <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400">
+                            <span className={`text-base font-extrabold ${
+                              isHeavy
+                                ? "text-red-600 dark:text-red-400"
+                                : isModerate
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-emerald-600 dark:text-emerald-400"
+                            }`}>
                               {formatDuration(route.predictedDurationSeconds || route.durationSeconds)}
                             </span>
                             <span className="text-xs text-slate-400">
@@ -571,13 +594,32 @@ export const GoogleMapsLayout: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* AI Reasoning Pill */}
-                      {route.recommendationReason && (
-                        <div className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 flex items-center gap-1">
-                          <Info className="w-3 h-3 shrink-0" />
-                          <span>{route.recommendationReason}</span>
-                        </div>
-                      )}
+                      {/* Google Maps Traffic Delay Pill */}
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {isHeavy ? (
+                          <span className="px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 text-[10px] font-bold border border-red-500/30 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                            Heavy traffic · +14m delay
+                          </span>
+                        ) : isModerate ? (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold border border-amber-500/30 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                            Moderate slowdown
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            Fastest route now · Typical traffic
+                          </span>
+                        )}
+
+                        {/* AI Reasoning Pill */}
+                        {route.recommendationReason && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-medium border border-emerald-500/20 truncate max-w-[200px]" title={route.recommendationReason}>
+                            ✨ {route.recommendationReason}
+                          </span>
+                        )}
+                      </div>
 
                       {/* Action buttons if selected */}
                       {isSelected && (
