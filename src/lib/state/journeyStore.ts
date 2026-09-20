@@ -164,7 +164,7 @@ let globalStore: JourneyStoreState = {
   demoStep: 0,
   isReplaying: false,
   replaySpeed: 1,
-  isTrafficLayerVisible: true,
+  isTrafficLayerVisible: false,
 };
 
 const listeners = new Set<() => void>();

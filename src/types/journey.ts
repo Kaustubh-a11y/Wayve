@@ -110,6 +110,11 @@ export interface RouteOption {
   };
   trafficCondition: "low" | "moderate" | "heavy";
   trafficSegments?: RouteSegment[];
+  agentScore?: number;
+  dataStructureType?: string;
+  trafficControlStrategy?: string;
+  trafficCongestionIndex?: number;
+  filterTag?: "fastest" | "balancer" | "express" | "bypass" | "incident_immune" | "eco" | "scenic" | "all";
   weatherCondition: {
     summary: string;
     tempC: number;

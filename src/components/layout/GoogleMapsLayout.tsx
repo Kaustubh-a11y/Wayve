@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useJourneyStore } from "@/lib/state/journeyStore";
 import { Destination, Stop, TravelMode } from "@/types/journey";
 import {
@@ -49,6 +49,7 @@ export const GoogleMapsLayout: React.FC = () => {
 
   // UI Modes
   const [isDirectionsMode, setIsDirectionsMode] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [originQuery, setOriginQuery] = useState("Your location");
   const [destinationQuery, setDestinationQuery] = useState("");
@@ -61,6 +62,7 @@ export const GoogleMapsLayout: React.FC = () => {
   const [aiPrompt, setAiPrompt] = useState("");
   const [activeTravelMode, setActiveTravelMode] = useState<TravelMode>("driving");
   const [activeSearchTarget, setActiveSearchTarget] = useState<"main" | "origin" | "destination">("main");
+  const suppressSuggestionsRef = useRef(false);
 
   // Keep search queries in sync with store
   useEffect(() => {
@@ -83,7 +85,7 @@ export const GoogleMapsLayout: React.FC = () => {
     }
   }, [state.routes.length, isNavigating]);
 
-  // Debounced search query for whichever input is actively focused
+  // Debounced search query for whichever input is actively focused (suppressed after selection)
   useEffect(() => {
     let q = "";
     if (activeSearchTarget === "origin") {
@@ -94,7 +96,15 @@ export const GoogleMapsLayout: React.FC = () => {
       q = searchQuery.trim();
     }
 
-    if (!q || q.length < 2 || q.includes("Your location")) {
+    if (
+      suppressSuggestionsRef.current ||
+      isDirectionsMode ||
+      !q ||
+      q.length < 2 ||
+      q.includes("Your location") ||
+      (state.destination && q.toLowerCase() === state.destination.name.toLowerCase()) ||
+      (selectedPlace && q.toLowerCase() === selectedPlace.name.toLowerCase())
+    ) {
       setSuggestions([]);
       return;
     }
@@ -103,14 +113,16 @@ export const GoogleMapsLayout: React.FC = () => {
       try {
         const { searchPlaces } = await import("@/lib/providers/mapbox");
         const results = await searchPlaces(q, state.origin?.coordinate, "in");
-        setSuggestions(results);
+        if (!suppressSuggestionsRef.current) {
+          setSuggestions(results);
+        }
       } catch {
         setSuggestions([]);
       }
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, originQuery, destinationQuery, activeSearchTarget, state.origin?.coordinate]);
+  }, [searchQuery, originQuery, destinationQuery, activeSearchTarget, state.origin?.coordinate, isDirectionsMode, state.destination, selectedPlace]);
 
   // Automated drive replay loop when navigating
   useEffect(() => {
@@ -123,6 +135,8 @@ export const GoogleMapsLayout: React.FC = () => {
 
   // Handlers
   const handleSelectSuggestion = (place: Destination) => {
+    suppressSuggestionsRef.current = true;
+    setSuggestions([]);
     if (activeSearchTarget === "origin") {
       setOrigin({
         name: place.name,
@@ -130,11 +144,9 @@ export const GoogleMapsLayout: React.FC = () => {
         address: place.address,
       });
       setOriginQuery(place.name);
-      setSuggestions([]);
     } else {
       setSearchQuery(place.name);
       setDestinationQuery(place.name);
-      setSuggestions([]);
       setSelectedPlace(place);
       setDestinationDirectAndCalculate(place);
       setIsDirectionsMode(true);
@@ -208,6 +220,18 @@ export const GoogleMapsLayout: React.FC = () => {
   const activeRoute = state.activeRoute || state.routes[0];
   const activeStops = state.stops.filter((s) => s.added);
 
+  const displayedRoutes = state.routes.filter((route) => {
+    if (activeFilter === "all") return true;
+    if (activeFilter === "fastest") return route.filterTag === "fastest" || route.isWayvePick;
+    if (activeFilter === "balancer") return route.filterTag === "balancer";
+    if (activeFilter === "express") return route.filterTag === "express";
+    if (activeFilter === "bypass") return route.filterTag === "bypass";
+    if (activeFilter === "incident_immune") return route.filterTag === "incident_immune";
+    if (activeFilter === "eco") return route.filterTag === "eco";
+    if (activeFilter === "scenic") return route.filterTag === "scenic";
+    return true;
+  });
+
   return (
     <>
       {/* ========================================================================= */}
@@ -239,26 +263,32 @@ export const GoogleMapsLayout: React.FC = () => {
             </button>
           </div>
 
-          {/* Top Search Card / Directions Header */}
-          <div className={`pointer-events-auto rounded-2xl shadow-xl transition-all border ${
+          {/* Top Search Card / Directions Header (Pill capsule in search mode, rounded-3xl in directions mode) */}
+          <div className={`pointer-events-auto shadow-xl transition-all border ${
+            !isDirectionsMode ? "rounded-full" : "rounded-[28px]"
+          } ${
             isLight
-              ? "bg-white border-slate-200/90 text-slate-800"
+              ? "bg-white/95 border-slate-200/90 text-slate-800"
               : "bg-[#1e293b]/95 border-slate-700/80 text-white"
-          } backdrop-blur-md overflow-hidden`}>
+          } backdrop-blur-xl overflow-hidden`}>
 
             {!isDirectionsMode ? (
-              /* A. NORMAL SEARCH BAR MODE */
+              /* A. NORMAL SEARCH BAR MODE: SLEEK ROUNDED CAPSULE */
               <div className="flex items-center px-4 py-2.5 gap-2.5">
                 <Search className="w-5 h-5 text-slate-400 shrink-0" />
                 <input
                   type="text"
                   value={searchQuery}
-                  onFocus={() => setActiveSearchTarget("main")}
+                  onFocus={() => {
+                    suppressSuggestionsRef.current = false;
+                    setActiveSearchTarget("main");
+                  }}
                   onChange={(e) => {
+                    suppressSuggestionsRef.current = false;
                     setActiveSearchTarget("main");
                     setSearchQuery(e.target.value);
                   }}
-                  placeholder="Search Nagpur, Starbucks, Pench, or any place..."
+                  placeholder="Search destination, Starbucks, Pench..."
                   className="w-full bg-transparent text-sm font-medium focus:outline-none placeholder:text-slate-400"
                 />
                 {searchQuery && (
@@ -286,7 +316,7 @@ export const GoogleMapsLayout: React.FC = () => {
                 {/* Sparkle Agentic AI Button */}
                 <button
                   onClick={() => setIsAiDrawerOpen(true)}
-                  className="px-2.5 py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-xs font-bold flex items-center gap-1 border border-emerald-500/30 transition-all shrink-0 active:scale-95"
+                  className="px-3 py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-xs font-bold flex items-center gap-1 border border-emerald-500/30 transition-all shrink-0 active:scale-95"
                   title="Plan route with Wayve AI"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -294,16 +324,16 @@ export const GoogleMapsLayout: React.FC = () => {
                 </button>
               </div>
             ) : (
-              /* B. GOOGLE MAPS DIRECTIONS INPUT MODE */
-              <div className="p-3.5 flex flex-col gap-2.5">
+              /* B. GOOGLE MAPS DIRECTIONS INPUT MODE: CORNER-FREE GLASS PANEL */
+              <div className="p-4 flex flex-col gap-3">
                 {/* Travel Mode Selector Tabs */}
                 <div className="flex items-center justify-between border-b pb-2.5 border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     {(["driving", "transit", "walking", "cycling"] as TravelMode[]).map((mode) => (
                       <button
                         key={mode}
                         onClick={() => setActiveTravelMode(mode)}
-                        className={`px-3 py-1 rounded-full text-xs font-semibold capitalize flex items-center gap-1 transition-all ${
+                        className={`px-3 py-1 rounded-full text-xs font-semibold capitalize flex items-center gap-1.5 transition-all ${
                           activeTravelMode === mode
                             ? "bg-blue-600 text-white shadow-sm"
                             : isLight
@@ -323,7 +353,7 @@ export const GoogleMapsLayout: React.FC = () => {
                       setIsDirectionsMode(false);
                       if (state.routes.length === 0) resetJourney();
                     }}
-                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"
+                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400 transition-colors"
                     title="Close directions"
                   >
                     <X className="w-4 h-4" />
@@ -331,9 +361,9 @@ export const GoogleMapsLayout: React.FC = () => {
                 </div>
 
                 {/* Origin & Destination Inputs + Swap Icon */}
-                <div className="relative flex flex-col gap-2 pl-6">
+                <div className="relative flex flex-col gap-2.5 pl-6">
                   {/* Vertical dotted connector */}
-                  <div className="absolute left-2.5 top-3.5 bottom-3.5 w-0.5 border-l-2 border-dotted border-slate-300 dark:border-slate-700 pointer-events-none" />
+                  <div className="absolute left-2.5 top-4 bottom-4 w-0.5 border-l-2 border-dotted border-slate-300 dark:border-slate-700 pointer-events-none" />
 
                   {/* Origin */}
                   <div className="relative flex items-center gap-2">
@@ -341,14 +371,18 @@ export const GoogleMapsLayout: React.FC = () => {
                     <input
                       type="text"
                       value={originQuery}
-                      onFocus={() => setActiveSearchTarget("origin")}
+                      onFocus={() => {
+                        suppressSuggestionsRef.current = false;
+                        setActiveSearchTarget("origin");
+                      }}
                       onChange={(e) => {
+                        suppressSuggestionsRef.current = false;
                         setActiveSearchTarget("origin");
                         setOriginQuery(e.target.value);
                       }}
-                      placeholder="Choose starting point (e.g. Nagpur)..."
-                      className={`w-full text-xs font-semibold py-1.5 px-3 rounded-lg border focus:outline-none ${
-                        isLight ? "bg-slate-50 border-slate-200" : "bg-slate-800 border-slate-700"
+                      placeholder="Starting point (e.g. Nagpur)..."
+                      className={`w-full text-xs font-semibold py-2 px-3.5 rounded-full border focus:outline-none transition-all ${
+                        isLight ? "bg-slate-50/80 border-slate-200 focus:bg-white focus:border-blue-500" : "bg-slate-800/80 border-slate-700 focus:bg-slate-800 focus:border-blue-500"
                       }`}
                     />
                   </div>
@@ -359,13 +393,13 @@ export const GoogleMapsLayout: React.FC = () => {
                       <div className="absolute -left-6 w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">
                         {String.fromCharCode(65 + idx)}
                       </div>
-                      <div className={`w-full text-xs font-medium py-1.5 px-3 rounded-lg border flex items-center justify-between ${
+                      <div className={`w-full text-xs font-medium py-1.5 px-3.5 rounded-full border flex items-center justify-between ${
                         isLight ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-slate-800 border-slate-700 text-slate-200"
                       }`}>
                         <span className="truncate">{stop.name}</span>
                         <button
                           onClick={() => removeStop(stop.id)}
-                          className="text-slate-400 hover:text-red-500 ml-1.5"
+                          className="text-slate-400 hover:text-red-500 ml-2"
                           title="Remove stop"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -382,14 +416,18 @@ export const GoogleMapsLayout: React.FC = () => {
                     <input
                       type="text"
                       value={destinationQuery}
-                      onFocus={() => setActiveSearchTarget("destination")}
+                      onFocus={() => {
+                        suppressSuggestionsRef.current = false;
+                        setActiveSearchTarget("destination");
+                      }}
                       onChange={(e) => {
+                        suppressSuggestionsRef.current = false;
                         setActiveSearchTarget("destination");
                         setDestinationQuery(e.target.value);
                       }}
-                      placeholder="Choose destination (e.g. Pench, Ramtek, Starbucks)..."
-                      className={`w-full text-xs font-semibold py-1.5 px-3 rounded-lg border focus:outline-none ${
-                        isLight ? "bg-slate-50 border-slate-200" : "bg-slate-800 border-slate-700"
+                      placeholder="Destination (e.g. Pench, Ramtek, Starbucks)..."
+                      className={`w-full text-xs font-semibold py-2 px-3.5 rounded-full border focus:outline-none transition-all ${
+                        isLight ? "bg-slate-50/80 border-slate-200 focus:bg-white focus:border-blue-500" : "bg-slate-800/80 border-slate-700 focus:bg-slate-800 focus:border-blue-500"
                       }`}
                     />
                   </div>
@@ -397,8 +435,8 @@ export const GoogleMapsLayout: React.FC = () => {
                   {/* Swap button (floating on right) */}
                   <button
                     onClick={swapOriginDestination}
-                    className={`absolute right-1 top-6 p-1.5 rounded-full border shadow-sm transition-all hover:scale-110 active:scale-95 ${
-                      isLight ? "bg-white border-slate-200 text-slate-600" : "bg-slate-800 border-slate-700 text-slate-300"
+                    className={`absolute right-1 top-6 p-2 rounded-full border shadow-sm transition-all hover:scale-110 active:scale-95 ${
+                      isLight ? "bg-white border-slate-200 text-slate-600 hover:bg-slate-50" : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
                     }`}
                     title="Reverse starting point and destination"
                   >
@@ -411,7 +449,7 @@ export const GoogleMapsLayout: React.FC = () => {
                   {!isAddingStop ? (
                     <button
                       onClick={() => setIsAddingStop(true)}
-                      className="text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1"
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1.5"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add stop (e.g. Starbucks)</span>
@@ -422,22 +460,22 @@ export const GoogleMapsLayout: React.FC = () => {
                         type="text"
                         value={newStopQuery}
                         onChange={(e) => setNewStopQuery(e.target.value)}
-                        placeholder="e.g. Starbucks, Shell, In-N-Out"
+                        placeholder="e.g. Starbucks, Shell Fuel..."
                         autoFocus
-                        className={`w-full text-xs py-1 px-2.5 rounded-md border focus:outline-none ${
+                        className={`w-full text-xs py-1.5 px-3 rounded-full border focus:outline-none ${
                           isLight ? "bg-slate-50 border-slate-200" : "bg-slate-800 border-slate-700"
                         }`}
                       />
                       <button
                         type="submit"
-                        className="px-2.5 py-1 bg-blue-600 text-white rounded-md text-xs font-semibold hover:bg-blue-700"
+                        className="px-3 py-1.5 bg-blue-600 text-white rounded-full text-xs font-semibold hover:bg-blue-700 shadow-sm"
                       >
                         Add
                       </button>
                       <button
                         type="button"
                         onClick={() => setIsAddingStop(false)}
-                        className="p-1 text-slate-400 hover:text-slate-600"
+                        className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -446,10 +484,10 @@ export const GoogleMapsLayout: React.FC = () => {
 
                   <button
                     onClick={() => setIsAiDrawerOpen(true)}
-                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-1"
+                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-1.5"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Ask AI</span>
+                    <span>Ask AI Agent</span>
                   </button>
                 </div>
               </div>
@@ -470,11 +508,11 @@ export const GoogleMapsLayout: React.FC = () => {
                 <button
                   key={chip.label}
                   onClick={() => handleCategorySearch(chip.query)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap shadow-md border transition-all active:scale-95 flex items-center gap-1 ${
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap shadow-md border transition-all active:scale-95 flex items-center gap-1 ${
                     isLight
                       ? "bg-white/95 border-slate-200/90 text-slate-700 hover:bg-slate-50"
                       : "bg-[#1e293b]/95 border-slate-700/80 text-slate-200 hover:bg-slate-800"
-                  } backdrop-blur-md`}
+                  } backdrop-blur-xl`}
                 >
                   <span>{chip.label}</span>
                 </button>
@@ -482,20 +520,20 @@ export const GoogleMapsLayout: React.FC = () => {
             </div>
           )}
 
-          {/* Autocomplete Suggestions Dropdown */}
-          {suggestions.length > 0 && (
-            <div className={`pointer-events-auto rounded-2xl shadow-2xl border max-h-72 overflow-y-auto ${
-              isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#1e293b] border-slate-700 text-white"
-            }`}>
+          {/* Autocomplete Suggestions Dropdown (STRICTLY SUPPRESSED in directions mode or after selection) */}
+          {!isDirectionsMode && suggestions.length > 0 && (
+            <div className={`pointer-events-auto rounded-[24px] shadow-2xl border max-h-72 overflow-y-auto p-1.5 ${
+              isLight ? "bg-white/95 border-slate-200 text-slate-800" : "bg-[#1e293b]/95 border-slate-700 text-white"
+            } backdrop-blur-xl`}>
               {suggestions.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => handleSelectSuggestion(item)}
-                  className={`w-full text-left px-4 py-2.5 border-b last:border-b-0 flex items-start gap-3 transition-colors ${
-                    isLight ? "border-slate-100 hover:bg-slate-50" : "border-slate-800 hover:bg-slate-800/80"
+                  className={`w-full text-left px-3.5 py-2.5 rounded-xl border-b last:border-b-0 flex items-start gap-3 transition-colors ${
+                    isLight ? "border-slate-100/60 hover:bg-slate-100" : "border-slate-800/60 hover:bg-slate-800/80"
                   }`}
                 >
-                  <MapPin className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                  <MapPin className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
                   <div className="truncate">
                     <p className="text-xs font-bold truncate">{item.name}</p>
                     <p className="text-[11px] text-slate-400 truncate">{item.address || item.category || "Verified Location"}</p>
@@ -505,45 +543,76 @@ export const GoogleMapsLayout: React.FC = () => {
             </div>
           )}
 
-          {/* Docked Left Drawer: Route Selection List */}
+          {/* Docked Left Drawer: AI Traffic Route Recommendation Portfolio (10 Distinct Routes) */}
           {state.routes.length > 0 && isDirectionsMode && (
-            <div className={`pointer-events-auto rounded-2xl shadow-2xl border p-3.5 flex flex-col gap-3 max-h-[calc(100vh-280px)] overflow-y-auto ${
-              isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#1e293b] border-slate-700 text-white"
-            }`}>
+            <div className={`pointer-events-auto rounded-[28px] shadow-2xl border p-4 flex flex-col gap-3 max-h-[calc(100vh-270px)] overflow-y-auto ${
+              isLight ? "bg-white/95 border-slate-200/90 text-slate-800" : "bg-[#1e293b]/95 border-slate-700/80 text-white"
+            } backdrop-blur-xl`}>
               
-              {/* Route Summary Title */}
-              <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-800">
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Routes Recommended</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    To {state.destination?.name} {activeStops.length > 0 ? `· via ${activeStops.length} stop(s)` : ""}
-                  </p>
+              {/* AI Agent Route Header */}
+              <div className="flex flex-col gap-2 border-b pb-3 border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold border border-emerald-500/30 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      AI Traffic Copilot
+                    </span>
+                    <span className="text-xs font-bold text-slate-400">
+                      {state.routes.length} Candidate Routes
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => toggleTrafficLayer()}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1 transition-all ${
+                        state.isTrafficLayerVisible
+                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                          : "border-slate-200 dark:border-slate-700 text-slate-400 hover:border-slate-400"
+                      }`}
+                      title="Toggle Live Ambient Highway Traffic Overlay"
+                    >
+                      <span>🚦</span>
+                      <span>{state.isTrafficLayerVisible ? "Traffic ON" : "Traffic OFF"}</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => toggleTrafficLayer()}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 transition-all ${
-                      state.isTrafficLayerVisible
-                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                        : "border-slate-200 dark:border-slate-700 text-slate-400"
-                    }`}
-                    title="Toggle Live Traffic on Map"
-                  >
-                    <span>🚦</span>
-                    <span>{state.isTrafficLayerVisible ? "Traffic ON" : "Traffic OFF"}</span>
-                  </button>
-                  <button
-                    onClick={() => setJourneyMode(state.journeyMode === "fast" ? "scenic" : "fast")}
-                    className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-200 dark:border-slate-700 uppercase"
-                  >
-                    {state.journeyMode}
-                  </button>
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                  To <span className="font-semibold text-slate-700 dark:text-slate-200">{state.destination?.name}</span> {activeStops.length > 0 ? `· via ${activeStops.length} stop(s)` : ""}
+                </p>
+
+                {/* Quick-Filter Strategy Pill Bar */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
+                  {[
+                    { id: "all", label: `All (${state.routes.length})` },
+                    { id: "fastest", label: "⚡ Fastest" },
+                    { id: "balancer", label: "🚦 Balancer" },
+                    { id: "express", label: "🛣️ Expressway" },
+                    { id: "bypass", label: "🔄 Ring Bypass" },
+                    { id: "incident_immune", label: "🛡️ Immune" },
+                    { id: "eco", label: "🌱 Eco" },
+                    { id: "scenic", label: "🌿 Scenic" },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveFilter(tab.id as any)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap transition-all border ${
+                        activeFilter === tab.id
+                          ? "bg-blue-600 border-blue-600 text-white shadow-sm"
+                          : isLight
+                            ? "bg-slate-100/90 border-slate-200 text-slate-600 hover:bg-slate-200/80"
+                            : "bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Route Cards */}
-              <div className="flex flex-col gap-2">
-                {state.routes.map((route) => {
+              {/* 10 Route Cards with Data Structures and Agent Scores */}
+              <div className="flex flex-col gap-2.5">
+                {displayedRoutes.map((route) => {
                   const isSelected = route.id === (state.selectedRouteId || state.routes[0]?.id);
                   const isAiPick = route.isWayvePick;
                   const isHeavy = route.trafficCondition === "heavy";
@@ -553,48 +622,69 @@ export const GoogleMapsLayout: React.FC = () => {
                     <div
                       key={route.id}
                       onClick={() => selectRoute(route.id)}
-                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                      className={`p-3.5 rounded-[20px] border cursor-pointer transition-all ${
                         isSelected
                           ? isAiPick
-                            ? "bg-emerald-500/10 border-emerald-500 shadow-md ring-1 ring-emerald-500"
-                            : "bg-blue-500/10 border-blue-500 shadow-md ring-1 ring-blue-500"
+                            ? "bg-emerald-500/10 border-emerald-500 shadow-md ring-1 ring-emerald-500/80"
+                            : "bg-blue-500/10 border-blue-500 shadow-md ring-1 ring-blue-500/80"
                           : isLight
-                            ? "bg-slate-50 border-slate-200 hover:bg-slate-100"
-                            : "bg-slate-800/60 border-slate-700 hover:bg-slate-800"
+                            ? "bg-slate-50/90 border-slate-200/90 hover:bg-slate-100/90"
+                            : "bg-slate-800/60 border-slate-700/80 hover:bg-slate-800"
                       }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <span className={`text-base font-extrabold ${
-                              isHeavy
-                                ? "text-red-600 dark:text-red-400"
-                                : isModerate
-                                  ? "text-amber-600 dark:text-amber-400"
-                                  : "text-emerald-600 dark:text-emerald-400"
-                            }`}>
-                              {formatDuration(route.predictedDurationSeconds || route.durationSeconds)}
+                      {/* Top Metric Header */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-base font-extrabold ${
+                            isHeavy
+                              ? "text-red-600 dark:text-red-400"
+                              : isModerate
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-emerald-600 dark:text-emerald-400"
+                          }`}>
+                            {formatDuration(route.predictedDurationSeconds || route.durationSeconds)}
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            ({formatDistance(route.distanceMeters)})
+                          </span>
+                        </div>
+
+                        {/* Agent Score Badge */}
+                        <div className="flex items-center gap-1">
+                          {route.agentScore && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold border border-emerald-500/30">
+                              {route.agentScore}% Score
                             </span>
-                            <span className="text-xs text-slate-400">
-                              ({formatDistance(route.distanceMeters)})
+                          )}
+                          {isAiPick && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-0.5 shadow-sm">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Top Pick
                             </span>
-                            {isAiPick && (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-0.5">
-                                <Sparkles className="w-2.5 h-2.5" />
-                                AI Pick
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                            {route.name}
-                          </p>
-                          <p className="text-[11px] text-slate-400">
-                            {route.summary}
-                          </p>
+                          )}
                         </div>
                       </div>
 
-                      {/* Google Maps Traffic Delay Pill */}
+                      {/* Route Algorithmic Name */}
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 mt-1">
+                        {route.name}
+                      </p>
+
+                      {/* Algorithmic Data Structure & Traffic Strategy Tags */}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        {route.dataStructureType && (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[9px] font-bold border border-blue-500/20">
+                            ⚙️ {route.dataStructureType}
+                          </span>
+                        )}
+                        {route.trafficControlStrategy && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[9px] font-bold border border-purple-500/20">
+                            🎯 {route.trafficControlStrategy}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Traffic Delay & Recommendation Reason */}
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         {isHeavy ? (
                           <span className="px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 text-[10px] font-bold border border-red-500/30 flex items-center gap-1">
@@ -604,20 +694,19 @@ export const GoogleMapsLayout: React.FC = () => {
                         ) : isModerate ? (
                           <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold border border-amber-500/30 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                            Moderate slowdown
+                            Moderate slowdown · 12% congestion
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            Fastest route now · Typical traffic
+                            Fluid corridor · {route.trafficCongestionIndex || 18}% congestion
                           </span>
                         )}
 
-                        {/* AI Reasoning Pill */}
                         {route.recommendationReason && (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-medium border border-emerald-500/20 truncate max-w-[200px]" title={route.recommendationReason}>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 w-full">
                             ✨ {route.recommendationReason}
-                          </span>
+                          </p>
                         )}
                       </div>
 
@@ -629,7 +718,7 @@ export const GoogleMapsLayout: React.FC = () => {
                               e.stopPropagation();
                               startJourney();
                             }}
-                            className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+                            className="flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-full text-xs font-bold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
                           >
                             <Navigation className="w-3.5 h-3.5 fill-current rotate-45" />
                             <span>Start Navigation</span>
@@ -639,8 +728,8 @@ export const GoogleMapsLayout: React.FC = () => {
                               e.stopPropagation();
                               setShowSteps(!showSteps);
                             }}
-                            className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
-                              isLight ? "border-slate-200 hover:bg-slate-100" : "border-slate-700 hover:bg-slate-800"
+                            className={`px-3.5 py-2.5 rounded-full text-xs font-semibold border transition-all ${
+                              isLight ? "border-slate-200 hover:bg-slate-100 text-slate-700" : "border-slate-700 hover:bg-slate-800 text-slate-300"
                             }`}
                           >
                             {showSteps ? "Hide Steps" : "Steps"}
@@ -654,16 +743,16 @@ export const GoogleMapsLayout: React.FC = () => {
 
               {/* Step-by-Step Maneuvers Drawer */}
               {showSteps && activeRoute?.maneuvers && (
-                <div className="mt-2 border-t pt-2 border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                <div className="mt-2 border-t pt-2.5 border-slate-200 dark:border-slate-800 flex flex-col gap-2">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Turn-by-Turn Steps</h4>
                   <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
                     {activeRoute.maneuvers.map((step, idx) => (
-                      <div key={idx} className="flex items-start gap-2.5 text-xs">
-                        <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 mt-0.5">
-                          <CornerUpRight className="w-3 h-3 text-slate-600 dark:text-slate-300" />
+                      <div key={idx} className="flex items-start gap-2.5 text-xs p-2 rounded-xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                        <div className="w-5 h-5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                          <CornerUpRight className="w-3 h-3" />
                         </div>
                         <div className="flex-1">
-                          <p className="font-semibold">{step.instruction}</p>
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">{step.instruction}</p>
                           <p className="text-[10px] text-slate-400">{formatDistance(step.distanceMeters)}</p>
                         </div>
                       </div>
@@ -672,14 +761,14 @@ export const GoogleMapsLayout: React.FC = () => {
                 </div>
               )}
 
-              {/* Quick Incident Simulation Button (for Demo) */}
+              {/* Quick Congestion Simulator for Live Agent Demonstration */}
               <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-                <span>Test dynamic rerouting:</span>
+                <span>Dynamic Traffic Test:</span>
                 <button
                   onClick={() => injectSimulationIncident("heavy_traffic", 0.85)}
-                  className="px-2 py-1 rounded-md bg-red-500/10 text-red-500 hover:bg-red-500/20 font-bold border border-red-500/20 transition-all"
+                  className="px-3 py-1 rounded-full bg-red-500/10 text-red-500 hover:bg-red-500/20 font-bold border border-red-500/20 transition-all active:scale-95"
                 >
-                  Simulate Congestion
+                  Simulate Incident
                 </button>
               </div>
             </div>
@@ -687,9 +776,9 @@ export const GoogleMapsLayout: React.FC = () => {
 
           {/* Place Details Sheet (when place is clicked without directions yet) */}
           {selectedPlace && !isDirectionsMode && (
-            <div className={`pointer-events-auto rounded-2xl shadow-2xl border p-4 flex flex-col gap-3 ${
-              isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#1e293b] border-slate-700 text-white"
-            }`}>
+            <div className={`pointer-events-auto rounded-[26px] shadow-2xl border p-4 flex flex-col gap-3 ${
+              isLight ? "bg-white/95 border-slate-200 text-slate-800" : "bg-[#1e293b]/95 border-slate-700 text-white"
+            } backdrop-blur-xl`}>
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="text-base font-bold">{selectedPlace.name}</h2>
@@ -713,14 +802,14 @@ export const GoogleMapsLayout: React.FC = () => {
                     setDestinationDirectAndCalculate(selectedPlace);
                     setIsDirectionsMode(true);
                   }}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-xs font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
                 >
                   <Navigation className="w-3.5 h-3.5 fill-current rotate-45" />
                   <span>Directions</span>
                 </button>
                 <button
                   onClick={() => handleAiPlan(`Drive to ${selectedPlace.name}, stop at Starbucks on the way`)}
-                  className="px-3 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-bold border border-emerald-500/30 flex items-center gap-1"
+                  className="px-4 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 rounded-full text-xs font-bold border border-emerald-500/30 flex items-center gap-1"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>AI Route</span>
