@@ -3,10 +3,12 @@ import { AIDiagnostics, JourneyMode, JourneyPreferences } from "@/types/journey"
 
 export interface ParsedIntentResult {
   intent: "find_destination" | "plan_journey" | "modify_journey" | "add_stop" | "change_preferences" | "general_chat";
+  originName?: string;
   destinationName?: string;
   journeyMode?: JourneyMode;
   stopsRequested?: string[];
   preferences?: Partial<JourneyPreferences>;
+  explanation?: string;
   replyMessage: string;
   diagnostics?: AIDiagnostics;
 }
@@ -23,25 +25,24 @@ export function parseIntentRuleBased(
   const q = query.toLowerCase();
 
   let mode: JourneyMode = "scenic";
-  if (q.includes("fast") || q.includes("quick") || q.includes("rush") || q.includes("asap")) {
+  if (q.includes("fast") || q.includes("quick") || q.includes("rush") || q.includes("asap") || q.includes("direct")) {
     mode = "fast";
   } else if (q.includes("chill") || q.includes("relax") || q.includes("leisure") || q.includes("easy")) {
     mode = "relaxed";
   } else if (q.includes("fuel") || q.includes("economy") || q.includes("cheap") || q.includes("toll")) {
     mode = "economy";
-  } else if (q.includes("scenic") || q.includes("nature") || q.includes("view") || q.includes("mountain") || q.includes("ghat")) {
+  } else if (q.includes("scenic") || q.includes("nature") || q.includes("view") || q.includes("mountain") || q.includes("coastal")) {
     mode = "scenic";
   }
 
   const stops: string[] = [];
-  if (q.includes("snack") || q.includes("food") || q.includes("eat") || q.includes("bite")) {
-    stops.push("snacks");
-  }
-  if (q.includes("coffee") || q.includes("tea") || q.includes("cafe")) {
-    stops.push("coffee");
-  }
-  if (q.includes("fuel") || q.includes("petrol") || q.includes("gas") || q.includes("charge")) {
-    stops.push("fuel");
+  const starbucksMatch = query.match(/(?:stop\s+(?:by|at)\s+|visit\s+|via\s+)?(starbucks|coffee\s*shop|cafe|in-n-out|mcdonald'?s|gas\s*station|ev\s*charger|rest\s*stop)/i);
+  if (starbucksMatch) {
+    stops.push(starbucksMatch[1]);
+  } else {
+    if (q.includes("snack") || q.includes("food") || q.includes("eat") || q.includes("bite")) stops.push("Snacks");
+    if (q.includes("coffee") || q.includes("tea") || q.includes("cafe")) stops.push("Coffee");
+    if (q.includes("fuel") || q.includes("petrol") || q.includes("gas") || q.includes("charge")) stops.push("Fuel");
   }
 
   const diagnostics: AIDiagnostics = {
@@ -50,60 +51,34 @@ export function parseIntentRuleBased(
     message: diagnosticReason || "Built-in offline NLP engine active (100% route & demo reliability)",
   };
 
-  // 1. Destination Discovery ("nearest hill station", "take me to lonavala")
-  if (q.includes("hill station") || q.includes("nearest") || q.includes("weekend trip") || q.includes("getaway")) {
+  // Pattern: "from X to Y"
+  const fromToMatch = query.match(/from\s+([^,]+?)\s+to\s+([^,]+?)(?:\s+stop|\s+via|\s+with|\s+and|$)/i);
+  if (fromToMatch) {
+    const originName = fromToMatch[1].trim();
+    const destinationName = fromToMatch[2].trim();
     return {
-      intent: "find_destination",
-      destinationName: "Lonavala",
+      intent: "plan_journey",
+      originName,
+      destinationName,
       journeyMode: mode,
       stopsRequested: stops,
-      preferences: {
-        scenic: 0.85,
-        fastest: 0.4,
-        traffic: 0.75,
-      },
-      replyMessage: "I found 3 nearby hill stations in the Western Ghats. Lonavala is the most accessible scenic route (65 km). Which one would you like to head to?",
+      explanation: `Synthesized corridor from ${originName} to ${destinationName}${stops.length > 0 ? ` with ${stops.join(", ")} stop` : ""}.`,
+      replyMessage: `Planning your ${mode} route from ${originName} to ${destinationName}${stops.length > 0 ? ` stopping at ${stops.join(", ")}` : ""}.`,
       diagnostics,
     };
   }
 
-  // Explicit Destination Names
-  if (q.includes("lonavala")) {
+  // Pattern: "to X" or "take me to X" or "drive to X" or "navigate to X"
+  const toMatch = query.match(/(?:take me to|navigate to|drive to|route to|go to|plan a trip to|head to|directions to|trip to|to)\s+([^,]+?)(?:\s+stop|\s+via|\s+with|\s+and|\s+avoid|$)/i);
+  if (toMatch) {
+    const destinationName = toMatch[1].trim();
     return {
       intent: "plan_journey",
-      destinationName: "Lonavala",
+      destinationName,
       journeyMode: mode,
       stopsRequested: stops,
-      preferences: {
-        scenic: mode === "scenic" ? 0.9 : 0.4,
-        fastest: mode === "fast" ? 0.95 : 0.35,
-        traffic: 0.8,
-      },
-      replyMessage: stops.length > 0
-        ? `Plotting a ${mode} route to Lonavala with a stop for ${stops.join(" & ")}. Comparing road conditions now.`
-        : `Setting course to Lonavala with ${mode} optimization. Comparing alternative corridors.`,
-      diagnostics,
-    };
-  }
-
-  if (q.includes("panchgani")) {
-    return {
-      intent: "plan_journey",
-      destinationName: "Panchgani",
-      journeyMode: mode,
-      stopsRequested: stops,
-      replyMessage: `Setting up your ${mode} route to Panchgani. Checking traffic along the mountain ghats.`,
-      diagnostics,
-    };
-  }
-
-  if (q.includes("matheran")) {
-    return {
-      intent: "plan_journey",
-      destinationName: "Matheran",
-      journeyMode: mode,
-      stopsRequested: stops,
-      replyMessage: `Setting course to Matheran via scenic foothills with ${mode} optimization.`,
+      explanation: `Synthesized ${mode} corridor to ${destinationName}${stops.length > 0 ? ` including stop at ${stops.join(", ")}` : ""}.`,
+      replyMessage: `Calculating optimal route to ${destinationName}${stops.length > 0 ? ` with stop at ${stops.join(", ")}` : ""}.`,
       diagnostics,
     };
   }
@@ -122,16 +97,17 @@ export function parseIntentRuleBased(
         avoidTolls: q.includes("toll"),
         avoidHighways: q.includes("avoid highway"),
       },
+      explanation: `Updated journey to ${dest} with added stop: ${stops.join(", ")}.`,
       replyMessage: stops.length > 0
-        ? `Added ${stops.join(" & ")} stop to your journey to ${dest}. Recalculating routes with minimum detour.`
-        : `Updated your route preferences for ${dest}. Adjusting candidate route optimization.`,
+        ? `Added ${stops.join(" & ")} stop to your journey to ${dest}. Recalculating route.`
+        : `Updated your route preferences for ${dest}.`,
       diagnostics,
     };
   }
 
   return {
     intent: "general_chat",
-    replyMessage: "Where would you like to head today? You can search any place, choose driving modes, or ask for scenic routes.",
+    replyMessage: "Where would you like to drive today? Try typing 'Drive to Santa Cruz with a stop at Starbucks' or search any destination.",
     diagnostics,
   };
 }
@@ -142,7 +118,8 @@ export function parseIntentRuleBased(
 export async function extractJourneyIntent(
   userPrompt: string,
   currentDestination?: string,
-  customKey?: string
+  customKey?: string,
+  userLocation?: { city?: string; region?: string; country?: string; coordinate?: { lat: number; lng: number } }
 ): Promise<ParsedIntentResult> {
   const startTime = Date.now();
   const apiKey = (customKey || process.env.GEMINI_API_KEY || "").trim();
@@ -169,24 +146,36 @@ export async function extractJourneyIntent(
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
 
-    const systemPrompt = `You are Wayve's Conversation Agent (Agent A).
-Your job is to convert natural language travel requests into structured journey objectives.
+    const userLocStr = userLocation
+      ? `${userLocation.city || "Nagpur"}, ${userLocation.region || "Maharashtra"}, ${userLocation.country || "India"} (Coordinates: ${userLocation.coordinate?.lat || 21.1463}, ${userLocation.coordinate?.lng || 79.0849})`
+      : "Nagpur, Maharashtra, India (Coordinates: 21.1463, 79.0849)";
+
+    const systemPrompt = `You are Wayve's Agentic Navigation Copilot.
+Convert user natural language travel queries into structured route objectives.
+USER'S SURROUNDING LOCATION: ${userLocStr}.
 Current destination context: ${currentDestination || "None"}
+
+CRITICAL RULE FOR SURROUNDINGS & POIs:
+The user is located in ${userLocStr}.
+All route planning, intermediate stops (e.g. coffee, Starbucks, food, fuel, EV charging), and road suggestions MUST be strictly grounded in the user's surrounding region and corridor.
+NEVER suggest locations, cities, or businesses in other countries (like Australia or the USA) unless the user explicitly names that international location.
+For example, if the user asks to "stop by Starbucks", they mean a Starbucks or coffee stop in/near their city or along their route corridor, NOT in Australia or overseas.
 
 Respond strictly with a single valid JSON object in this exact schema:
 {
-  "intent": "find_destination" | "plan_journey" | "modify_journey" | "add_stop" | "change_preferences" | "general_chat",
-  "destinationName": string or null,
-  "journeyMode": "fast" | "scenic" | "relaxed" | "economy" | "custom",
-  "stopsRequested": string[] (e.g. ["coffee", "snacks"]),
+  "intent": "plan_journey" | "modify_journey" | "add_stop" | "find_destination" | "general_chat",
+  "originName": string or null (e.g. "Nagpur" if specified or implied, else null),
+  "destinationName": string or null (e.g. "Ramtek" or "Pench National Park"),
+  "journeyMode": "fast" | "scenic" | "relaxed" | "economy",
+  "stopsRequested": string[] (e.g. ["Starbucks", "Shell Gas Station"]),
   "preferences": {
     "scenic": number (0.0 to 1.0),
     "fastest": number (0.0 to 1.0),
-    "traffic": number (0.0 to 1.0),
     "avoidHighways": boolean,
     "avoidTolls": boolean
   },
-  "replyMessage": string (brief, calm, assistant response in 1-2 sentences)
+  "explanation": string (1 brief sentence explaining why this route/corridor fits the user's objective in their region),
+  "replyMessage": string (brief, professional assistant confirmation in 1 sentence)
 }
 Never include markdown code fences or backticks. Only output the raw JSON object.`;
 
@@ -202,11 +191,13 @@ Never include markdown code fences or backticks. Only output the raw JSON object
 
     return {
       intent: parsed.intent || "plan_journey",
+      originName: parsed.originName || undefined,
       destinationName: parsed.destinationName || undefined,
       journeyMode: parsed.journeyMode || "scenic",
       stopsRequested: parsed.stopsRequested || [],
       preferences: parsed.preferences,
-      replyMessage: parsed.replyMessage || "Understood. Updating your journey objectives.",
+      explanation: parsed.explanation || "Optimized corridor calculated by Wayve AI.",
+      replyMessage: parsed.replyMessage || "Synthesizing route with your requested stops.",
       diagnostics: {
         status: "connected",
         engine: "gemini",

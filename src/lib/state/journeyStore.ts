@@ -137,7 +137,7 @@ let globalStore: JourneyStoreState = {
     {
       id: "msg-welcome",
       sender: "wayve",
-      text: "Where are we going today? You can search any destination, or tap quick hill station getaways like Lonavala or Panchgani.",
+      text: "Where would you like to drive from Nagpur? Try 'Stop by nearby Starbucks first then take me to Pench National Park' or search any destination.",
       timestamp: "Just now",
     },
   ],
@@ -205,6 +205,19 @@ export function useJourneyStore() {
       if (savedKey) {
         journeyActions.setCustomGeminiKey(savedKey);
       }
+
+      // Automatically detect real user surroundings (Nagpur / Central India)
+      import("../services/userLocation").then(({ detectUserLocation }) => {
+        detectUserLocation().then((loc) => {
+          journeyActions.setOrigin({
+            name: `${loc.city} (Your location)`,
+            coordinate: loc.coordinate,
+            address: `${loc.city}, ${loc.region}, ${loc.country}`,
+          });
+        }).catch(() => {
+          // Defaults to Nagpur
+        });
+      });
     }
 
     return () => {
@@ -226,9 +239,11 @@ export function useJourneyStore() {
     // Journey Actions
     setJourneyState: (st: JourneyState) => updateStore({ journeyState: st }),
 
-    setOrigin: (origin: { name: string; coordinate: Coordinate; address?: string }) => {
-      updateStore({ origin, currentLocation: origin.coordinate });
-    },
+    setOrigin: journeyActions.setOrigin,
+    swapOriginDestination: journeyActions.swapOriginDestination,
+    addStop: journeyActions.addStop,
+    removeStop: journeyActions.removeStop,
+    planTripWithAI: journeyActions.planTripWithAI,
 
     // Step 1: Select destination and smoothly present preferences
     selectDestination: (dest: Destination) => {
@@ -489,6 +504,12 @@ export function useJourneyStore() {
             prompt: text,
             currentDestination: globalStore.destination?.name,
             customKey: globalStore.customGeminiKey || undefined,
+            userLocation: {
+              city: globalStore.origin.name.replace(" (Your location)", "") || "Nagpur",
+              region: "Maharashtra",
+              country: "India",
+              coordinate: globalStore.origin.coordinate,
+            },
           }),
         });
 
@@ -554,7 +575,7 @@ export function useJourneyStore() {
         if (data.stopsRequested && data.stopsRequested.length > 0) {
           for (const stopReq of data.stopsRequested) {
             const cleanReq = stopReq.toLowerCase().trim();
-            let stopCoord = { lat: 18.5308, lng: 73.8475 }; // Default FC Road Starbucks near Pune origin
+            let stopCoord = { lat: 21.1306, lng: 79.0975 }; // Default VR Mall Starbucks in Nagpur
             let stopName = stopReq.charAt(0).toUpperCase() + stopReq.slice(1);
 
             try {
@@ -564,6 +585,7 @@ export function useJourneyStore() {
                 body: JSON.stringify({
                   query: cleanReq.includes("starbucks") ? "Starbucks" : cleanReq,
                   proximity: globalStore.origin.coordinate,
+                  countryCode: "in",
                 }),
               });
               const sData = await sRes.json();
@@ -719,6 +741,164 @@ export const journeyActions = {
       localStorage.setItem("wayve_gemini_key", key);
     }
     updateStore({ customGeminiKey: key });
+  },
+
+  setOrigin: (origin: { name: string; coordinate: Coordinate; address?: string }) => {
+    updateStore({ origin, currentLocation: origin.coordinate });
+    if (globalStore.destination) {
+      journeyActions.generateRoutes(origin.coordinate, globalStore.destination);
+    }
+  },
+
+  swapOriginDestination: () => {
+    const { origin, destination } = globalStore;
+    if (!destination) return;
+    const newOrigin = {
+      name: destination.name,
+      coordinate: destination.coordinate,
+      address: destination.address,
+    };
+    const newDest: Destination = {
+      id: `dest-${Date.now()}`,
+      name: origin.name,
+      type: "place",
+      address: origin.address,
+      coordinate: origin.coordinate,
+      rating: 4.8,
+    };
+    updateStore({ origin: newOrigin, destination: newDest, currentLocation: newOrigin.coordinate });
+    journeyActions.generateRoutes(newOrigin.coordinate, newDest);
+  },
+
+  addStop: (stop: Stop) => {
+    updateStore((prev) => {
+      const existing = prev.stops.filter((s) => s.id !== stop.id);
+      return { stops: [...existing, { ...stop, added: true }] };
+    });
+    if (globalStore.destination) {
+      journeyActions.generateRoutes(globalStore.origin.coordinate, globalStore.destination);
+    }
+  },
+
+  removeStop: (id: string) => {
+    updateStore((prev) => ({
+      stops: prev.stops.filter((s) => s.id !== id),
+    }));
+    if (globalStore.destination) {
+      journeyActions.generateRoutes(globalStore.origin.coordinate, globalStore.destination);
+    }
+  },
+
+  planTripWithAI: async (prompt: string) => {
+    updateStore({ isAiThinking: true, isConversationOpen: true });
+    const userMsg: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      sender: "user",
+      text: prompt,
+      timestamp: "Just now",
+    };
+    updateStore((prev) => ({ chatMessages: [...prev.chatMessages, userMsg] }));
+
+    try {
+      const res = await fetch("/api/v1/conversation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          currentDestination: globalStore.destination?.name,
+          customKey: globalStore.customGeminiKey,
+          userLocation: {
+            city: globalStore.origin.name.replace(" (Your location)", "") || "Nagpur",
+            region: "Maharashtra",
+            country: "India",
+            coordinate: globalStore.origin.coordinate,
+          },
+        }),
+      });
+      const parsed = await res.json();
+
+      const replyMsg: ChatMessage = {
+        id: `msg-${Date.now() + 1}`,
+        sender: "wayve",
+        text: parsed.replyMessage || "I've synthesized your optimal corridor.",
+        timestamp: "Just now",
+      };
+      updateStore((prev) => ({
+        chatMessages: [...prev.chatMessages, replyMsg],
+        aiDiagnostics: parsed.diagnostics || prev.aiDiagnostics,
+        isAiThinking: false,
+      }));
+
+      // Geocode and update origin if provided
+      let curOrigin = globalStore.origin;
+      if (parsed.originName) {
+        const { searchPlaces } = await import("../providers/mapbox");
+        const origResults = await searchPlaces(parsed.originName);
+        if (origResults.length > 0) {
+          curOrigin = {
+            name: origResults[0].name,
+            coordinate: origResults[0].coordinate,
+            address: origResults[0].address,
+          };
+          updateStore({ origin: curOrigin, currentLocation: curOrigin.coordinate });
+        }
+      }
+
+      // Geocode and update destination if provided
+      let curDest = globalStore.destination;
+      if (parsed.destinationName) {
+        const { searchPlaces } = await import("../providers/mapbox");
+        const destResults = await searchPlaces(parsed.destinationName, curOrigin.coordinate);
+        if (destResults.length > 0) {
+          curDest = destResults[0];
+          updateStore({
+            destination: curDest,
+            planningStep: "routes",
+            journeyState: "DESTINATION_RESOLVED",
+          });
+        }
+      }
+
+      // If stops requested (e.g. Starbucks), geocode and add them
+      const addedWaypoints: Coordinate[] = [];
+      if (parsed.stopsRequested && parsed.stopsRequested.length > 0 && curDest) {
+        const { searchPlaces } = await import("../providers/mapbox");
+        for (const stopQuery of parsed.stopsRequested) {
+          const midPoint = {
+            lat: (curOrigin.coordinate.lat + curDest.coordinate.lat) / 2,
+            lng: (curOrigin.coordinate.lng + curDest.coordinate.lng) / 2,
+          };
+          const stopResults = await searchPlaces(`${stopQuery}`, midPoint);
+          if (stopResults.length > 0) {
+            const match = stopResults[0];
+            const newStop: Stop = {
+              id: `stop-ai-${Date.now()}-${Math.random()}`,
+              name: match.name,
+              type: match.name.toLowerCase().includes("starbucks") || match.name.toLowerCase().includes("coffee") ? "coffee" : "food",
+              coordinate: match.coordinate,
+              detourMinutes: 4,
+              rating: 4.8,
+              added: true,
+            };
+            updateStore((prev) => ({
+              stops: [...prev.stops.filter((s) => s.id !== newStop.id), newStop],
+            }));
+            addedWaypoints.push(newStop.coordinate);
+          }
+        }
+      }
+
+      // Generate multi-waypoint routes
+      if (curDest) {
+        const allWaypoints = [
+          ...globalStore.stops.filter((s) => s.added).map((s) => s.coordinate),
+          ...addedWaypoints,
+        ];
+        await journeyActions.generateRoutes(curOrigin.coordinate, curDest, allWaypoints);
+      }
+    } catch {
+      updateStore({ isAiThinking: false });
+    }
   },
 
   setDestination: (dest: Destination) => {

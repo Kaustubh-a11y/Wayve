@@ -4,7 +4,7 @@ import { extractJourneyIntent } from "@/lib/providers/gemini";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { prompt, currentDestination, customKey } = body;
+    const { prompt, currentDestination, customKey, userLocation } = body;
 
     if (!prompt) {
       return NextResponse.json(
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await extractJourneyIntent(prompt, currentDestination, customKey);
+    const result = await extractJourneyIntent(prompt, currentDestination, customKey, userLocation);
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json(
