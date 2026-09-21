@@ -18,6 +18,7 @@ import {
   Leaf,
   List,
   MapPin,
+  Menu,
   Moon,
   Navigation,
   Pause,
@@ -56,6 +57,7 @@ export const GoogleMapsLayout: React.FC = () => {
     stayOnRoute,
     toggleTrafficLayer,
     seekProgress,
+    toggleSidebar,
   } = useJourneyStore();
 
   const isLight = state.theme === "light";
@@ -363,8 +365,17 @@ export const GoogleMapsLayout: React.FC = () => {
 
             {!isDirectionsMode ? (
               /* A. NORMAL SEARCH BAR MODE: SLEEK ROUNDED CAPSULE */
-              <div className="flex items-center px-4 py-2.5 gap-2.5">
-                <Search className="w-5 h-5 text-slate-400 shrink-0" />
+              <div className="flex items-center px-3.5 py-2 gap-2">
+                {/* Menu Hamburger Button: Opens Sidebar (Saved, Ask AI, Settings) */}
+                <button
+                  onClick={() => toggleSidebar(true)}
+                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors shrink-0"
+                  title="Open Menu (Saved Locations, Ask AI, Settings)"
+                  aria-label="Open Menu"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+
                 <input
                   type="text"
                   value={searchQuery}
@@ -479,6 +490,13 @@ export const GoogleMapsLayout: React.FC = () => {
                           Hide
                         </button>
                       )}
+                      <button
+                        onClick={() => toggleSidebar(true)}
+                        className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                        title="Open Menu (Saved Locations, Ask AI, Settings)"
+                      >
+                        <Menu className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => {
                           setIsDirectionsMode(false);

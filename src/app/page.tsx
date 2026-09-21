@@ -6,6 +6,7 @@ import { GoogleMapsLayout } from "@/components/layout/GoogleMapsLayout";
 import { TripIntelligenceModal } from "@/components/overlays/TripIntelligenceModal";
 import { WeatherModal } from "@/components/overlays/WeatherModal";
 import { SettingsModal } from "@/components/overlays/SettingsModal";
+import { WayveSidebar } from "@/components/navigation/WayveSidebar";
 
 export default function WayveHome() {
   return (
@@ -16,7 +17,10 @@ export default function WayveHome() {
       {/* 2. Google Maps-Standard Navigation Layout & UI (Search, Directions, Route Cards, HUD, AI) */}
       <GoogleMapsLayout />
 
-      {/* 3. Auxiliary Modals (Post-Trip Intelligence, Weather, Settings) */}
+      {/* 3. Navigation Drawer Sidebar (Saved Locations, Ask AI, Settings) */}
+      <WayveSidebar />
+
+      {/* 4. Auxiliary Modals (Post-Trip Intelligence, Weather, Settings) */}
       <TripIntelligenceModal />
       <WeatherModal />
       <SettingsModal />

@@ -52,7 +52,7 @@ export interface Destination {
 export interface Stop {
   id: string;
   name: string;
-  type: "coffee" | "snacks" | "fuel" | "scenic" | "food" | "rest" | "other";
+  type: "coffee" | "snacks" | "fuel" | "scenic" | "food" | "rest" | "tour" | "pandal" | "other";
   coordinate: Coordinate;
   detourMinutes: number;
   address?: string;

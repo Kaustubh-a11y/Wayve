@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { AIDiagnostics, JourneyMode, JourneyPreferences } from "@/types/journey";
+import { AIDiagnostics, Coordinate, JourneyMode, JourneyPreferences } from "@/types/journey";
+import { extractPandalsFromQuery, optimizeTourOrder } from "../services/pandalData";
 
 export interface ParsedIntentResult {
   intent: "find_destination" | "plan_journey" | "modify_journey" | "add_stop" | "change_preferences" | "general_chat";
@@ -7,6 +8,13 @@ export interface ParsedIntentResult {
   destinationName?: string;
   journeyMode?: JourneyMode;
   stopsRequested?: string[];
+  isTour?: boolean;
+  isRoundTrip?: boolean;
+  tourWaypoints?: Array<{
+    name: string;
+    address?: string;
+    coordinate: Coordinate;
+  }>;
   preferences?: Partial<JourneyPreferences>;
   explanation?: string;
   replyMessage: string;
@@ -23,6 +31,54 @@ export function parseIntentRuleBased(
   diagnosticReason?: string
 ): ParsedIntentResult {
   const q = query.toLowerCase();
+
+  const diagnostics: AIDiagnostics = {
+    status: "fallback",
+    engine: "rule_based",
+    message: diagnosticReason || "Built-in offline NLP engine active (100% route & demo reliability)",
+  };
+
+  // 1. Detect Multi-Stop City Tour / Ganpati Pandal Loop Request
+  const isTourRequest =
+    q.includes("tour") ||
+    q.includes("pandal") ||
+    q.includes("roam") ||
+    q.includes("ganpati") ||
+    q.includes("locations [") ||
+    q.includes("city tour") ||
+    q.includes("come back to current location") ||
+    (q.includes("visit") && (q.includes("theme") || q.includes("ground") || q.includes("chowk")));
+
+  if (isTourRequest) {
+    const rawPandals = extractPandalsFromQuery(query);
+    const startCoord = { lat: 21.1463, lng: 79.0849 }; // Nagpur Center
+    const ordered = optimizeTourOrder(startCoord, rawPandals);
+
+    const isRoundTrip =
+      q.includes("come back") ||
+      q.includes("current location in the end") ||
+      q.includes("round trip") ||
+      q.includes("loop") ||
+      q.includes("city tour");
+
+    return {
+      intent: "plan_journey",
+      isTour: true,
+      isRoundTrip: isRoundTrip !== false,
+      originName: "Current Location",
+      destinationName: isRoundTrip ? "Current Location (Tour Finish)" : ordered[ordered.length - 1]?.name,
+      journeyMode: "scenic",
+      stopsRequested: ordered.map((p) => p.name),
+      tourWaypoints: ordered.map((p) => ({
+        name: p.name,
+        address: `${p.ground}, ${p.locality}, Nagpur`,
+        coordinate: p.coordinate,
+      })),
+      explanation: `Synthesized continuous city tour connecting ${ordered.length} Ganpati pandals across Nagpur in an optimized loop.`,
+      replyMessage: `Synthesized your ${ordered.length}-stop Nagpur city tour for Ganpati Pandals. Navigating in an optimal non-overlapping loop from your location and returning at the end.`,
+      diagnostics,
+    };
+  }
 
   let mode: JourneyMode = "scenic";
   if (q.includes("fast") || q.includes("quick") || q.includes("rush") || q.includes("asap") || q.includes("direct")) {
@@ -44,12 +100,6 @@ export function parseIntentRuleBased(
     if (q.includes("coffee") || q.includes("tea") || q.includes("cafe")) stops.push("Coffee");
     if (q.includes("fuel") || q.includes("petrol") || q.includes("gas") || q.includes("charge")) stops.push("Fuel");
   }
-
-  const diagnostics: AIDiagnostics = {
-    status: "fallback",
-    engine: "rule_based",
-    message: diagnosticReason || "Built-in offline NLP engine active (100% route & demo reliability)",
-  };
 
   // Pattern: "from X to Y"
   const fromToMatch = query.match(/from\s+([^,]+?)\s+to\s+([^,]+?)(?:\s+stop|\s+via|\s+with|\s+and|$)/i);
@@ -164,17 +214,19 @@ For example, if the user asks to "stop by Starbucks", they mean a Starbucks or c
 Respond strictly with a single valid JSON object in this exact schema:
 {
   "intent": "plan_journey" | "modify_journey" | "add_stop" | "find_destination" | "general_chat",
-  "originName": string or null (e.g. "Nagpur" if specified or implied, else null),
-  "destinationName": string or null (e.g. "Ramtek" or "Pench National Park"),
+  "originName": string or null (e.g. "Current Location" or "Nagpur"),
+  "destinationName": string or null (e.g. "Current Location" if a round-trip tour, or destination),
   "journeyMode": "fast" | "scenic" | "relaxed" | "economy",
-  "stopsRequested": string[] (e.g. ["Starbucks", "Shell Gas Station"]),
+  "stopsRequested": string[] (e.g. list of places, pandals, or stops),
+  "isTour": boolean (true if user wants a multi-stop city tour, pandal visit loop, or sightseeing),
+  "isRoundTrip": boolean (true if user wants to come back to current/starting location in the end),
   "preferences": {
     "scenic": number (0.0 to 1.0),
     "fastest": number (0.0 to 1.0),
     "avoidHighways": boolean,
     "avoidTolls": boolean
   },
-  "explanation": string (1 brief sentence explaining why this route/corridor fits the user's objective in their region),
+  "explanation": string (1 brief sentence explaining why this route fits),
   "replyMessage": string (brief, professional assistant confirmation in 1 sentence)
 }
 Never include markdown code fences or backticks. Only output the raw JSON object.`;
@@ -189,12 +241,32 @@ Never include markdown code fences or backticks. Only output the raw JSON object
     const parsed = JSON.parse(cleanJson);
     const latency = Date.now() - startTime;
 
+    // If it's a tour or pandal visit request, cross-reference with Nagpur pandals database
+    let tourWaypoints;
+    let isTour = Boolean(parsed.isTour);
+    let isRoundTrip = Boolean(parsed.isRoundTrip);
+    if (isTour || userPrompt.toLowerCase().includes("pandal") || userPrompt.toLowerCase().includes("ganpati")) {
+      isTour = true;
+      isRoundTrip = true;
+      const rawPandals = extractPandalsFromQuery(userPrompt);
+      const startCoord = userLocation?.coordinate || { lat: 21.1463, lng: 79.0849 };
+      const ordered = optimizeTourOrder(startCoord, rawPandals);
+      tourWaypoints = ordered.map((p) => ({
+        name: p.name,
+        address: `${p.ground}, ${p.locality}, Nagpur`,
+        coordinate: p.coordinate,
+      }));
+    }
+
     return {
       intent: parsed.intent || "plan_journey",
-      originName: parsed.originName || undefined,
-      destinationName: parsed.destinationName || undefined,
+      originName: parsed.originName || (isTour ? "Current Location" : undefined),
+      destinationName: isRoundTrip ? "Current Location (Tour Finish)" : parsed.destinationName || undefined,
       journeyMode: parsed.journeyMode || "scenic",
-      stopsRequested: parsed.stopsRequested || [],
+      stopsRequested: tourWaypoints ? tourWaypoints.map((w) => w.name) : parsed.stopsRequested || [],
+      isTour,
+      isRoundTrip,
+      tourWaypoints,
       preferences: parsed.preferences,
       explanation: parsed.explanation || "Optimized corridor calculated by Wayve AI.",
       replyMessage: parsed.replyMessage || "Synthesizing route with your requested stops.",

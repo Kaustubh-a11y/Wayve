@@ -86,12 +86,53 @@ export interface JourneyStoreState {
   isWeatherModalOpen: boolean;
   isTripIntelligenceOpen: boolean;
   isSettingsOpen: boolean;
+  isSidebarOpen: boolean;
   isDemoPlaying: boolean;
   demoStep: number;
   isReplaying: boolean;
   replaySpeed: number;
   isTrafficLayerVisible: boolean;
+  savedPlaces: Destination[];
 }
+
+export const DEFAULT_SAVED_PLACES: Destination[] = [
+  {
+    id: "saved-home",
+    name: "Home",
+    type: "place",
+    address: "Civil Lines, Nagpur, Maharashtra 440001",
+    coordinate: { lat: 21.1530, lng: 79.0760 },
+    category: "Home",
+    rating: 5.0,
+  },
+  {
+    id: "saved-work",
+    name: "Work / SIT Campus",
+    type: "place",
+    address: "Symbiosis Institute of Technology, Wathoda / MIHAN, Nagpur",
+    coordinate: { lat: 21.1270, lng: 79.1550 },
+    category: "Work",
+    rating: 4.9,
+  },
+  {
+    id: "saved-starbucks",
+    name: "Starbucks Coffee - VR Mall",
+    type: "place",
+    address: "VR Mall, Medical Square, Rambagh, Nagpur 440009",
+    coordinate: { lat: 21.1306, lng: 79.0975 },
+    category: "Cafe",
+    rating: 4.8,
+  },
+  {
+    id: "saved-futala",
+    name: "Futala Lake Promenade",
+    type: "place",
+    address: "Futala Lake Road, Telangkhedi, Nagpur 440001",
+    coordinate: { lat: 21.1542, lng: 79.0436 },
+    category: "Leisure",
+    rating: 4.7,
+  },
+];
 
 const initialPreferences: JourneyPreferences = {
   fastest: 0.5,
@@ -116,6 +157,7 @@ let globalStore: JourneyStoreState = {
   destination: null,
   candidateDestinations: DETERMINISTIC_DESTINATIONS,
   stops: DETERMINISTIC_STOPS,
+  savedPlaces: DEFAULT_SAVED_PLACES,
   journeyMode: "scenic",
   preferences: initialPreferences,
   routes: [],
@@ -160,6 +202,7 @@ let globalStore: JourneyStoreState = {
   isWeatherModalOpen: false,
   isTripIntelligenceOpen: false,
   isSettingsOpen: false,
+  isSidebarOpen: false,
   isDemoPlaying: false,
   demoStep: 0,
   isReplaying: false,
@@ -208,6 +251,18 @@ export function useJourneyStore() {
         journeyActions.setCustomGeminiKey(savedKey);
       }
 
+      const savedPlacesRaw = localStorage.getItem("wayve_saved_places");
+      if (savedPlacesRaw) {
+        try {
+          const parsed = JSON.parse(savedPlacesRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            updateStore({ savedPlaces: parsed });
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       // Automatically detect real user surroundings (Nagpur / Central India)
       import("../services/userLocation").then(({ detectUserLocation }) => {
         detectUserLocation().then((loc) => {
@@ -237,6 +292,12 @@ export function useJourneyStore() {
     setBearing: (bearing: number) => updateStore({ bearing }),
     setCustomGeminiKey: journeyActions.setCustomGeminiKey,
     setAiDiagnostics: (aiDiagnostics: AIDiagnostics) => updateStore({ aiDiagnostics }),
+
+    // Sidebar & Saved Places
+    toggleSidebar: journeyActions.toggleSidebar,
+    addSavedPlace: journeyActions.addSavedPlace,
+    removeSavedPlace: journeyActions.removeSavedPlace,
+    saveCurrentLocation: journeyActions.saveCurrentLocation,
 
     // Journey Actions
     setJourneyState: (st: JourneyState) => updateStore({ journeyState: st }),
@@ -736,6 +797,46 @@ export const journeyActions = {
     updateStore({ mapViewMode: mode });
   },
 
+  toggleSidebar: (val?: boolean) => {
+    updateStore((prev) => ({
+      isSidebarOpen: val !== undefined ? val : !prev.isSidebarOpen,
+    }));
+  },
+
+  addSavedPlace: (place: Destination) => {
+    updateStore((prev) => {
+      const filtered = prev.savedPlaces.filter((p) => p.id !== place.id && p.name !== place.name);
+      const next = [place, ...filtered];
+      if (typeof window !== "undefined") {
+        localStorage.setItem("wayve_saved_places", JSON.stringify(next));
+      }
+      return { savedPlaces: next };
+    });
+  },
+
+  removeSavedPlace: (id: string) => {
+    updateStore((prev) => {
+      const next = prev.savedPlaces.filter((p) => p.id !== id);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("wayve_saved_places", JSON.stringify(next));
+      }
+      return { savedPlaces: next };
+    });
+  },
+
+  saveCurrentLocation: (customName?: string) => {
+    const origin = globalStore.origin;
+    const newPlace: Destination = {
+      id: `saved-${Date.now()}`,
+      name: customName || origin.name.replace(" (Your location)", "") || "Pinned Location",
+      address: origin.address || "My Current Pinned Point",
+      coordinate: origin.coordinate,
+      type: "place",
+      rating: 5.0,
+    };
+    journeyActions.addSavedPlace(newPlace);
+  },
+
   setPlanningStep: (step: PlanningStep) => {
     updateStore({ planningStep: step });
   },
@@ -846,6 +947,56 @@ export const journeyActions = {
           };
           updateStore({ origin: curOrigin, currentLocation: curOrigin.coordinate });
         }
+      }
+
+      // Check if this is a multi-stop city tour / pandal loop
+      if (parsed.isTour && parsed.tourWaypoints && parsed.tourWaypoints.length > 0) {
+        const tourStops: Stop[] = parsed.tourWaypoints.map((wp: { name: string; address?: string; coordinate: Coordinate }, idx: number) => ({
+          id: `stop-tour-${idx + 1}-${Date.now()}`,
+          name: wp.name,
+          address: wp.address,
+          type: "pandal" as const,
+          coordinate: wp.coordinate,
+          detourMinutes: 0,
+          rating: 4.9,
+          added: true,
+        }));
+
+        let tourDest: Destination;
+        if (parsed.isRoundTrip) {
+          tourDest = {
+            id: `dest-tour-roundtrip-${Date.now()}`,
+            name: `${curOrigin.name} (Round-Trip Return)`,
+            address: curOrigin.address || "Tour Start & End Point",
+            coordinate: curOrigin.coordinate,
+            type: "place",
+            rating: 5.0,
+          };
+        } else {
+          const lastWp = parsed.tourWaypoints[parsed.tourWaypoints.length - 1];
+          tourDest = {
+            id: `dest-tour-${Date.now()}`,
+            name: lastWp.name,
+            address: lastWp.address || lastWp.name,
+            coordinate: lastWp.coordinate,
+            type: "place",
+            rating: 4.9,
+          };
+        }
+
+        updateStore({
+          destination: tourDest,
+          stops: tourStops,
+          planningStep: "routes",
+          journeyState: "DESTINATION_RESOLVED",
+        });
+
+        await journeyActions.generateRoutes(
+          curOrigin.coordinate,
+          tourDest,
+          tourStops.map((s) => s.coordinate)
+        );
+        return;
       }
 
       // Geocode and update destination if provided

@@ -678,17 +678,23 @@ export const MapCanvas: React.FC = () => {
 
     const activeStops = state.stops.filter((s) => s.added);
     activeStops.forEach((stop, idx) => {
-      const letter = String.fromCharCode(65 + idx); // A, B, C
+      const isPandal =
+        stop.type === "pandal" ||
+        stop.name.toLowerCase().includes("pandal") ||
+        stop.name.toLowerCase().includes("mandal") ||
+        stop.name.toLowerCase().includes("raja");
       const isCoffee = stop.name.toLowerCase().includes("starbucks") || stop.type === "coffee";
-      const icon = isCoffee ? "☕" : letter;
+      const icon = isPandal ? "🛕" : isCoffee ? "☕" : String.fromCharCode(65 + (idx % 26));
+      const badgeBg = isPandal ? "linear-gradient(135deg, #f97316, #ea580c)" : isCoffee ? "#059669" : "#f59e0b";
+      const stopNumber = idx + 1;
 
       const el = document.createElement("div");
-      el.className = "flex flex-col items-center cursor-pointer";
+      el.className = "flex flex-col items-center cursor-pointer group";
       el.innerHTML = `
-        <div style="padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;margin-bottom:2px;box-shadow:0 2px 8px rgba(0,0,0,0.2);background:${isLight ? "white" : "#0f172a"};color:${isLight ? "#1e293b" : "#f8fafc"};border:1px solid ${isLight ? "#e2e8f0" : "#334155"}">
-          ${stop.name}
+        <div style="padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;margin-bottom:2px;box-shadow:0 2px 8px rgba(0,0,0,0.25);background:${isLight ? "white" : "#0f172a"};color:${isLight ? "#1e293b" : "#f8fafc"};border:1px solid ${isPandal ? "#f97316" : isLight ? "#e2e8f0" : "#334155"}">
+          ${isPandal ? `<span style="color:#ea580c;font-weight:800;margin-right:3px;">#${stopNumber}</span>` : ""}${stop.name}
         </div>
-        <div style="width:24px;height:24px;background:#f59e0b;border-radius:50%;border:2px solid white;color:white;font-size:12px;font-weight:bold;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3)">
+        <div style="width:26px;height:26px;background:${badgeBg};border-radius:50%;border:2px solid white;color:white;font-size:12px;font-weight:bold;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35)">
           ${icon}
         </div>
       `;
