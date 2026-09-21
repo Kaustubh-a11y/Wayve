@@ -65,8 +65,8 @@ export function parseIntentRuleBased(
       intent: "plan_journey",
       isTour: true,
       isRoundTrip: isRoundTrip !== false,
-      originName: "Current Location",
-      destinationName: isRoundTrip ? "Current Location (Tour Finish)" : ordered[ordered.length - 1]?.name,
+      originName: "Nagpur (Your location)",
+      destinationName: isRoundTrip ? "Nagpur (Tour Finish)" : ordered[ordered.length - 1]?.name,
       journeyMode: "scenic",
       stopsRequested: ordered.map((p) => p.name),
       tourWaypoints: ordered.map((p) => ({

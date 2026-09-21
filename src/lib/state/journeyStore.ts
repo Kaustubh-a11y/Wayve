@@ -938,11 +938,25 @@ export const journeyActions = {
         isAiThinking: false,
       }));
 
-      // Geocode and update origin if provided
+      // Geocode and update origin if provided, but NEVER geocode self/current location
       let curOrigin = globalStore.origin;
-      if (parsed.originName) {
+      if (curOrigin.name.toLowerCase().includes("patna")) {
+        curOrigin = DEFAULT_ORIGIN;
+        updateStore({ origin: curOrigin, currentLocation: curOrigin.coordinate });
+      }
+
+      const lowerOrigin = (parsed.originName || "").toLowerCase().trim();
+      const isSelfOrigin =
+        !lowerOrigin ||
+        lowerOrigin.includes("current location") ||
+        lowerOrigin.includes("your location") ||
+        lowerOrigin.includes("my location") ||
+        lowerOrigin.includes("here") ||
+        lowerOrigin.includes("nagpur (your location)");
+
+      if (parsed.originName && !isSelfOrigin) {
         const { searchPlaces } = await import("../providers/mapbox");
-        const origResults = await searchPlaces(parsed.originName);
+        const origResults = await searchPlaces(parsed.originName, curOrigin.coordinate);
         if (origResults.length > 0) {
           curOrigin = {
             name: origResults[0].name,
@@ -1005,7 +1019,29 @@ export const journeyActions = {
 
       // Geocode and update destination if provided
       let curDest = globalStore.destination;
-      if (parsed.destinationName) {
+      const lowerDest = (parsed.destinationName || "").toLowerCase().trim();
+      const isSelfDest =
+        lowerDest.includes("current location") ||
+        lowerDest.includes("tour finish") ||
+        lowerDest.includes("my location") ||
+        lowerDest.includes("here") ||
+        lowerDest.includes("round-trip");
+
+      if (isSelfDest) {
+        curDest = {
+          id: `dest-self-${Date.now()}`,
+          name: `${curOrigin.name} (Round-Trip Return)`,
+          address: curOrigin.address || "Tour Start & End Point",
+          coordinate: curOrigin.coordinate,
+          type: "place",
+          rating: 5.0,
+        };
+        updateStore({
+          destination: curDest,
+          planningStep: "routes",
+          journeyState: "DESTINATION_RESOLVED",
+        });
+      } else if (parsed.destinationName) {
         const { searchPlaces } = await import("../providers/mapbox");
         const destResults = await searchPlaces(parsed.destinationName, curOrigin.coordinate);
         if (destResults.length > 0) {

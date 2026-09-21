@@ -106,6 +106,35 @@ export const MapCanvas: React.FC = () => {
   const isLight = state.theme === "light";
   const viewMode = state.mapViewMode;
 
+  const handleDropPinAtCoords = async (lng: number, lat: number) => {
+    let locName = "Pinned Location";
+    let fullAddr = `Nagpur (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+        { headers: { "User-Agent": "WayveMapPin/1.0" } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const addr = data.address || {};
+        const road = addr.road || addr.suburb || addr.neighbourhood || addr.city || "Nagpur";
+        locName = road;
+        fullAddr = data.display_name?.split(",").slice(0, 3).join(",") || `${road}, Nagpur`;
+      }
+    } catch {
+      // safe fallback
+    }
+
+    setDroppedPin({
+      coordinate: { lat, lng },
+      name: locName,
+      address: fullAddr,
+    });
+    setSaveAsName(locName);
+    setIsSavedFeedback(false);
+  };
+
   const FALLBACK_B64 = "cGsuZXlKMUlqb2lhMkYxYzNSMVltZ3dJaXdpWVNJNkltTnRkVFZ3WTNGallqQXhiR3N5ZVhOaE9USm5iekkzYUdNaWZRLmhPb09NWVgtNng2T1lzdlpQSG0wRlE=";
   const DEFAULT_MAPBOX_TOKEN = typeof atob !== "undefined"
     ? atob(FALLBACK_B64)
@@ -152,48 +181,29 @@ export const MapCanvas: React.FC = () => {
         attributionControl: false,
       });
 
+      // Disable default double-click zoom immediately
+      map.doubleClickZoom.disable();
+
+      // Double-click to drop a pointer pin anywhere
+      map.on("dblclick", (e: any) => {
+        if (e.originalEvent) {
+          e.originalEvent.preventDefault();
+          e.originalEvent.stopPropagation();
+        }
+        handleDropPinAtCoords(e.lngLat.lng, e.lngLat.lat);
+      });
+
+      // Right-click (contextmenu) to also drop pin
+      map.on("contextmenu", (e: any) => {
+        if (e.originalEvent) {
+          e.originalEvent.preventDefault();
+        }
+        handleDropPinAtCoords(e.lngLat.lng, e.lngLat.lat);
+      });
+
       map.on("load", () => {
         setMapLoaded(true);
-
-        // Disable default double-click zoom to enable double-click to drop a pin & save location
         map.doubleClickZoom.disable();
-
-        // Double-click to drop a pointer pin anywhere
-        map.on("dblclick", async (e: any) => {
-          if (e.originalEvent) {
-            e.originalEvent.preventDefault();
-            e.originalEvent.stopPropagation();
-          }
-          const lng = e.lngLat.lng;
-          const lat = e.lngLat.lat;
-
-          let locName = "Subhash Nagar";
-          let fullAddr = `Nagpur (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-
-          try {
-            const res = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-              { headers: { "User-Agent": "WayveMapPin/1.0" } }
-            );
-            if (res.ok) {
-              const data = await res.json();
-              const addr = data.address || {};
-              const road = addr.road || addr.suburb || addr.neighbourhood || addr.city || "Nagpur";
-              locName = road;
-              fullAddr = data.display_name?.split(",").slice(0, 3).join(",") || `${road}, Nagpur`;
-            }
-          } catch {
-            // safe fallback
-          }
-
-          setDroppedPin({
-            coordinate: { lat, lng },
-            name: locName,
-            address: fullAddr,
-          });
-          setSaveAsName(locName);
-          setIsSavedFeedback(false);
-        });
 
         // Add 3D building extrusion layer for spatial depth if vector style
         const hasMapbox = cleanToken && cleanToken.startsWith("pk.") && !cleanToken.includes("dummy");
@@ -929,6 +939,20 @@ export const MapCanvas: React.FC = () => {
           aria-label="Center map"
         >
           <Navigation2 className="w-4 h-4 text-emerald-500" />
+        </button>
+
+        {/* Drop Pin tool button */}
+        <button
+          onClick={() => {
+            if (!mapRef.current) return;
+            const center = mapRef.current.getCenter();
+            handleDropPinAtCoords(center.lng, center.lat);
+          }}
+          className="w-10 h-10 rounded-2xl glass-panel flex items-center justify-center text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all shadow-lg active:scale-95"
+          title="Drop Pin at Center (Save location)"
+          aria-label="Drop Pin"
+        >
+          <MapPin className="w-4 h-4" />
         </button>
 
         <div className="flex flex-col rounded-2xl glass-panel overflow-hidden border border-white/10 shadow-lg">
