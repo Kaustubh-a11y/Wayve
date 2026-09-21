@@ -24,6 +24,7 @@ import {
   Check,
   ChevronRight,
   Route,
+  Search,
 } from "lucide-react";
 
 export type SidebarTab = "saved" | "ai" | "settings";
@@ -47,11 +48,32 @@ export const WayveSidebar: React.FC = () => {
     toggleSettings,
   } = useJourneyStore();
 
-  const [activeTab, setActiveTab] = useState<SidebarTab>("ai");
+  const [activeTab, setActiveTab] = useState<SidebarTab>("saved");
   const [aiInput, setAiInput] = useState("");
   const [isSavingCustom, setIsSavingCustom] = useState(false);
   const [customPlaceName, setCustomPlaceName] = useState("");
   const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+  const [searchPlaceQuery, setSearchPlaceQuery] = useState("");
+  const [placeSearchResults, setPlaceSearchResults] = useState<Destination[]>([]);
+  const [isSearchingPlaces, setIsSearchingPlaces] = useState(false);
+
+  const handleSearchPlacesToSave = async (q: string) => {
+    setSearchPlaceQuery(q);
+    if (!q || q.trim().length < 2) {
+      setPlaceSearchResults([]);
+      return;
+    }
+    setIsSearchingPlaces(true);
+    try {
+      const { searchPlaces } = await import("@/lib/providers/mapbox");
+      const results = await searchPlaces(q, state.origin?.coordinate, "in");
+      setPlaceSearchResults(results.slice(0, 5));
+    } catch {
+      setPlaceSearchResults([]);
+    } finally {
+      setIsSearchingPlaces(false);
+    }
+  };
 
   if (!state.isSidebarOpen) return null;
 
@@ -201,6 +223,98 @@ export const WayveSidebar: React.FC = () => {
                   <span>{savedFeedback}</span>
                 </div>
               )}
+
+              {/* How to Save Helper Card */}
+              <div
+                className={`p-3 rounded-2xl border text-xs ${
+                  isLight
+                    ? "bg-gradient-to-br from-blue-50/70 to-indigo-50/70 border-blue-200/80 text-blue-900"
+                    : "bg-gradient-to-br from-blue-950/30 to-indigo-950/20 border-blue-900/60 text-blue-200"
+                }`}
+              >
+                <div className="font-bold flex items-center gap-1.5 mb-1.5 text-blue-700 dark:text-blue-300">
+                  <span>💡</span>
+                  <span>How to Save Locations:</span>
+                </div>
+                <div className="text-[11px] space-y-1.5 text-slate-600 dark:text-slate-300 leading-relaxed">
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-bold text-blue-600 dark:text-blue-400">1.</span>
+                    <span><strong>Double-click anywhere on the map</strong> to drop a pointer pin and choose <em>&quot;Save this location as...&quot;</em></span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-bold text-blue-600 dark:text-blue-400">2.</span>
+                    <span>Use the search bar below to search any landmark or neighborhood and bookmark it.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search & Save a Place Bar */}
+              <div className="space-y-1.5">
+                <div className="relative flex items-center">
+                  <Search className="w-3.5 h-3.5 absolute left-3 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchPlaceQuery}
+                    onChange={(e) => handleSearchPlacesToSave(e.target.value)}
+                    placeholder="Search any place in Nagpur to save..."
+                    className={`w-full text-xs py-2 pl-8 pr-3 rounded-xl border focus:outline-none transition-all ${
+                      isLight
+                        ? "bg-slate-50 border-slate-200 focus:bg-white focus:border-blue-500 text-slate-800"
+                        : "bg-slate-800 border-slate-700 focus:bg-slate-800 focus:border-blue-500 text-white"
+                    }`}
+                  />
+                  {searchPlaceQuery && (
+                    <button
+                      onClick={() => {
+                        setSearchPlaceQuery("");
+                        setPlaceSearchResults([]);
+                      }}
+                      className="absolute right-2.5 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Results Dropdown with Save Buttons */}
+                {placeSearchResults.length > 0 && (
+                  <div
+                    className={`p-1.5 rounded-2xl border shadow-lg space-y-1 ${
+                      isLight ? "bg-white border-slate-200" : "bg-slate-900 border-slate-800"
+                    }`}
+                  >
+                    {placeSearchResults.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="text-xs font-bold truncate text-slate-800 dark:text-slate-200">
+                            {item.name}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {item.address || "Nagpur"}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            addSavedPlace(item);
+                            setSearchPlaceQuery("");
+                            setPlaceSearchResults([]);
+                            setSavedFeedback(`Saved "${item.name}"!`);
+                            setTimeout(() => setSavedFeedback(null), 2500);
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shrink-0 flex items-center gap-1 shadow-sm"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Save</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Custom Save Pin Input */}
               {isSavingCustom && (

@@ -69,29 +69,11 @@ export async function detectUserLocation(): Promise<UserLocationProfile> {
         coordinate: { lat, lng },
       };
     } catch {
-      // User declined or GPS timed out, proceed to IP-based lookup
+      // User declined or GPS timed out, proceed to default
     }
   }
 
-  // 2. IP-based location lookup (zero prompt, instant, accurate to city level)
-  try {
-    const ipRes = await fetch("http://ip-api.com/json");
-    if (ipRes.ok) {
-      const ipData = await ipRes.json();
-      if (ipData && ipData.lat && ipData.lon) {
-        return {
-          city: ipData.city || "Nagpur",
-          region: ipData.regionName || "Maharashtra",
-          country: ipData.country || "India",
-          countryCode: (ipData.countryCode || "in").toLowerCase(),
-          coordinate: { lat: ipData.lat, lng: ipData.lon },
-        };
-      }
-    }
-  } catch {
-    // Fallback to default
-  }
-
+  // 2. Reliable default to Nagpur (Zero Mile Center) for consistent local routing
   return NAGPUR_DEFAULT;
 }
 

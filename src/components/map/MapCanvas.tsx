@@ -3,8 +3,20 @@
 import React, { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import { useJourneyStore } from "@/lib/state/journeyStore";
-import { MapViewMode } from "@/types/journey";
-import { Compass, Eye, Layers, Minus, Navigation2, Plus } from "lucide-react";
+import { Coordinate, MapViewMode } from "@/types/journey";
+import {
+  Bookmark,
+  Check,
+  Compass,
+  Eye,
+  Layers,
+  MapPin,
+  Minus,
+  Navigation,
+  Navigation2,
+  Plus,
+  X,
+} from "lucide-react";
 import { NAGPUR_AMBIENT_TRAFFIC_GEOJSON } from "@/lib/services/trafficData";
 
 // Google Maps-like zero-config raster styles (works 100% reliably worldwide with 0 API tokens!)
@@ -70,9 +82,26 @@ export const MapCanvas: React.FC = () => {
   const stopMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const routeDurationMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const bottleneckMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const droppedPinMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
-  const { state, selectRoute, setMapViewMode, toggleTrafficLayer } = useJourneyStore();
+  const {
+    state,
+    selectRoute,
+    setMapViewMode,
+    toggleTrafficLayer,
+    addSavedPlace,
+    setDestinationDirectAndCalculate,
+    setOrigin,
+  } = useJourneyStore();
+
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [droppedPin, setDroppedPin] = useState<{
+    coordinate: Coordinate;
+    name: string;
+    address: string;
+  } | null>(null);
+  const [saveAsName, setSaveAsName] = useState("");
+  const [isSavedFeedback, setIsSavedFeedback] = useState(false);
 
   const isLight = state.theme === "light";
   const viewMode = state.mapViewMode;
@@ -125,6 +154,46 @@ export const MapCanvas: React.FC = () => {
 
       map.on("load", () => {
         setMapLoaded(true);
+
+        // Disable default double-click zoom to enable double-click to drop a pin & save location
+        map.doubleClickZoom.disable();
+
+        // Double-click to drop a pointer pin anywhere
+        map.on("dblclick", async (e: any) => {
+          if (e.originalEvent) {
+            e.originalEvent.preventDefault();
+            e.originalEvent.stopPropagation();
+          }
+          const lng = e.lngLat.lng;
+          const lat = e.lngLat.lat;
+
+          let locName = "Subhash Nagar";
+          let fullAddr = `Nagpur (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+
+          try {
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+              { headers: { "User-Agent": "WayveMapPin/1.0" } }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              const addr = data.address || {};
+              const road = addr.road || addr.suburb || addr.neighbourhood || addr.city || "Nagpur";
+              locName = road;
+              fullAddr = data.display_name?.split(",").slice(0, 3).join(",") || `${road}, Nagpur`;
+            }
+          } catch {
+            // safe fallback
+          }
+
+          setDroppedPin({
+            coordinate: { lat, lng },
+            name: locName,
+            address: fullAddr,
+          });
+          setSaveAsName(locName);
+          setIsSavedFeedback(false);
+        });
 
         // Add 3D building extrusion layer for spatial depth if vector style
         const hasMapbox = cleanToken && cleanToken.startsWith("pk.") && !cleanToken.includes("dummy");
@@ -731,6 +800,54 @@ export const MapCanvas: React.FC = () => {
     }
   }, [state.activeIncident, mapLoaded]);
 
+  // Dropped Pin Marker (on Double-Click)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    if (droppedPin) {
+      if (!droppedPinMarkerRef.current) {
+        const el = document.createElement("div");
+        el.className = "flex flex-col items-center cursor-pointer -translate-y-1/2 animate-bounce";
+        el.innerHTML = `
+          <div style="padding:4px 9px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap;margin-bottom:2px;box-shadow:0 3px 12px rgba(0,0,0,0.3);background:#2563eb;color:#ffffff;border:2px solid #ffffff">
+            📍 Dropped Pin
+          </div>
+          <svg width="28" height="38" viewBox="0 0 28 38" fill="none">
+            <path d="M14 0C6.27 0 0 6.27 0 14C0 24.5 14 38 14 38C14 38 28 24.5 28 14C28 6.27 21.73 0 14 0Z" fill="#2563EB"/>
+            <circle cx="14" cy="14" r="5" fill="#FFFFFF"/>
+          </svg>
+        `;
+
+        droppedPinMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+          .setLngLat([droppedPin.coordinate.lng, droppedPin.coordinate.lat])
+          .addTo(map);
+      } else {
+        droppedPinMarkerRef.current.setLngLat([droppedPin.coordinate.lng, droppedPin.coordinate.lat]);
+      }
+    } else if (droppedPinMarkerRef.current) {
+      droppedPinMarkerRef.current.remove();
+      droppedPinMarkerRef.current = null;
+    }
+  }, [droppedPin, mapLoaded]);
+
+  const handleSaveDroppedPin = () => {
+    if (!droppedPin) return;
+    const placeName = (saveAsName || droppedPin.name).trim() || "Pinned Location";
+    addSavedPlace({
+      id: `saved-${Date.now()}`,
+      name: placeName,
+      address: droppedPin.address,
+      coordinate: droppedPin.coordinate,
+      type: "place",
+      rating: 5.0,
+    });
+    setIsSavedFeedback(true);
+    setTimeout(() => {
+      setIsSavedFeedback(false);
+    }, 2500);
+  };
+
   // Spatial Camera Controls
   const handleRecenter = () => {
     if (mapRef.current) {
@@ -834,6 +951,131 @@ export const MapCanvas: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Interactive Dropped Pin Floating Card (On Double Click) */}
+      {droppedPin && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-sm pointer-events-auto animate-fade-in">
+          <div
+            className={`p-4 rounded-3xl shadow-2xl border backdrop-blur-2xl transition-all ${
+              isLight
+                ? "bg-white/95 text-slate-900 border-slate-200/90"
+                : "bg-slate-900/95 text-white border-slate-700/80"
+            }`}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-md">
+                  <MapPin className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                    Dropped Pin
+                  </h4>
+                  <div className="text-sm font-bold truncate max-w-[200px]">
+                    {droppedPin.name}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setDroppedPin(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Dismiss pin"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3 line-clamp-1">
+              {droppedPin.address}
+            </p>
+
+            {/* Save Location Form: "Save this location as" */}
+            <div className="mb-3">
+              <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide block mb-1">
+                Save this location as:
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={saveAsName}
+                  onChange={(e) => setSaveAsName(e.target.value)}
+                  placeholder="e.g. My Favorite Cafe, Friend's Place"
+                  className={`flex-1 text-xs py-1.5 px-3 rounded-xl border focus:outline-none focus:border-blue-500 font-medium ${
+                    isLight ? "bg-slate-50 border-slate-200 text-slate-900" : "bg-slate-800 border-slate-700 text-white"
+                  }`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleSaveDroppedPin();
+                    }
+                  }}
+                />
+                <button
+                  onClick={handleSaveDroppedPin}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1 shrink-0 ${
+                    isSavedFeedback
+                      ? "bg-emerald-600 text-white"
+                      : "bg-blue-600 hover:bg-blue-700 text-white active:scale-95"
+                  }`}
+                >
+                  {isSavedFeedback ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Saved!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Bookmark className="w-3.5 h-3.5" />
+                      <span>Save</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Actions: Directions / Route Here & Set as Start */}
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
+              <button
+                onClick={() => {
+                  setDestinationDirectAndCalculate({
+                    id: `dest-pin-${Date.now()}`,
+                    name: saveAsName || droppedPin.name,
+                    address: droppedPin.address,
+                    coordinate: droppedPin.coordinate,
+                    type: "place",
+                    rating: 5.0,
+                  });
+                  setDroppedPin(null);
+                }}
+                className="py-2 px-3 rounded-xl text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md flex items-center justify-center gap-1.5 hover:from-blue-700 hover:to-indigo-700 active:scale-95 transition-all"
+              >
+                <Navigation className="w-3.5 h-3.5 fill-current rotate-45" />
+                <span>Directions</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setOrigin({
+                    name: saveAsName || droppedPin.name,
+                    coordinate: droppedPin.coordinate,
+                    address: droppedPin.address,
+                  });
+                  setDroppedPin(null);
+                }}
+                className={`py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
+                  isLight
+                    ? "bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800"
+                    : "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200"
+                }`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                <span>Set as Start</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

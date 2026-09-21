@@ -263,9 +263,13 @@ export function useJourneyStore() {
         }
       }
 
-      // Automatically detect real user surroundings (Nagpur / Central India)
+      // Automatically detect real user surroundings (defaults safely to Nagpur)
       import("../services/userLocation").then(({ detectUserLocation }) => {
         detectUserLocation().then((loc) => {
+          // Reject inaccurate ISP IP misdetections (like Patna or Bihar)
+          if (loc.city.toLowerCase().includes("patna") || loc.region.toLowerCase().includes("bihar")) {
+            return;
+          }
           journeyActions.setOrigin({
             name: `${loc.city} (Your location)`,
             coordinate: loc.coordinate,
