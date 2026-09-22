@@ -28,7 +28,8 @@ export interface ParsedIntentResult {
 export function parseIntentRuleBased(
   query: string,
   currentDestination?: string,
-  diagnosticReason?: string
+  diagnosticReason?: string,
+  userLocation?: { city?: string; region?: string; country?: string; coordinate?: { lat: number; lng: number } }
 ): ParsedIntentResult {
   const q = query.toLowerCase();
 
@@ -101,11 +102,42 @@ export function parseIntentRuleBased(
     if (q.includes("fuel") || q.includes("petrol") || q.includes("gas") || q.includes("charge")) stops.push("Fuel");
   }
 
+  // Helper to normalize colloquial venue queries and strip proximity noise
+  const city = userLocation?.city || "Nagpur";
+  const sanitizeDest = (raw: string): string => {
+    let cleaned = raw
+      .replace(/^(the\s+)?(nearest|closest)\s+/i, "")
+      .replace(/\s+(near|around)\s+(me|here|my location)$/i, "")
+      .replace(/\s+nearby$/i, "")
+      .trim();
+
+    if (/^mac\s*d|mcdonald'?s|^mcd$/i.test(cleaned)) {
+      cleaned = `McDonald's, ${city}`;
+    } else if (/^starbucks$/i.test(cleaned)) {
+      cleaned = `Starbucks, ${city}`;
+    } else if (/^kfc$/i.test(cleaned)) {
+      cleaned = `KFC, ${city}`;
+    } else if (/^dominos|domino'?s(\s+pizza)?$/i.test(cleaned)) {
+      cleaned = `Domino's Pizza, ${city}`;
+    } else if (/^subway$/i.test(cleaned)) {
+      cleaned = `Subway, ${city}`;
+    } else if (/^burger\s*king$/i.test(cleaned)) {
+      cleaned = `Burger King, ${city}`;
+    } else if (/^ccd|cafe\s*coffee\s*day$/i.test(cleaned)) {
+      cleaned = `Cafe Coffee Day, ${city}`;
+    } else if (/^fuel|petrol(\s*pump)?|gas\s*station$/i.test(cleaned)) {
+      cleaned = `Petrol Pump, ${city}`;
+    } else if (/^ev(\s*charging)?$/i.test(cleaned)) {
+      cleaned = `EV Charging Station, ${city}`;
+    }
+    return cleaned;
+  };
+
   // Pattern: "from X to Y"
   const fromToMatch = query.match(/from\s+([^,]+?)\s+to\s+([^,]+?)(?:\s+stop|\s+via|\s+with|\s+and|$)/i);
   if (fromToMatch) {
     const originName = fromToMatch[1].trim();
-    const destinationName = fromToMatch[2].trim();
+    const destinationName = sanitizeDest(fromToMatch[2].trim());
     return {
       intent: "plan_journey",
       originName,
@@ -121,7 +153,7 @@ export function parseIntentRuleBased(
   // Pattern: "to X" or "take me to X" or "drive to X" or "navigate to X"
   const toMatch = query.match(/(?:take me to|navigate to|drive to|route to|go to|plan a trip to|head to|directions to|trip to|to)\s+([^,]+?)(?:\s+stop|\s+via|\s+with|\s+and|\s+avoid|$)/i);
   if (toMatch) {
-    const destinationName = toMatch[1].trim();
+    const destinationName = sanitizeDest(toMatch[1].trim());
     return {
       intent: "plan_journey",
       destinationName,
@@ -131,6 +163,23 @@ export function parseIntentRuleBased(
       replyMessage: `Calculating optimal route to ${destinationName}${stops.length > 0 ? ` with stop at ${stops.join(", ")}` : ""}.`,
       diagnostics,
     };
+  }
+
+  // Pattern: "nearest X", "find X near me", "X nearby"
+  const nearestMatch = query.match(/(?:find|locate|search|show)?\s*(?:the\s+)?(?:nearest|closest)?\s*([a-zA-Z0-9\s'\-]+?)(?:\s+near\s+me|\s+around\s+me|\s+nearby)?$/i);
+  if (nearestMatch && nearestMatch[1].trim().length > 2 && !q.startsWith("what") && !q.startsWith("how")) {
+    const destinationName = sanitizeDest(nearestMatch[1].trim());
+    if (destinationName && destinationName.toLowerCase() !== "where would you like to drive") {
+      return {
+        intent: "plan_journey",
+        destinationName,
+        journeyMode: mode,
+        stopsRequested: stops,
+        explanation: `Located nearest venue for ${destinationName}.`,
+        replyMessage: `Finding the nearest ${destinationName} and calculating optimal corridor from your current location.`,
+        diagnostics,
+      };
+    }
   }
 
   // Contextual modifications (adding stops or adjusting preferences to current journey)
@@ -176,7 +225,7 @@ export async function extractJourneyIntent(
 
   // Validate key existence
   if (!apiKey) {
-    return parseIntentRuleBased(userPrompt, currentDestination, "No API key configured. Built-in NLP active.");
+    return parseIntentRuleBased(userPrompt, currentDestination, "No API key configured. Built-in NLP active.", userLocation);
   }
 
   // Validate Google AI Studio key format (legacy AIzaSy or new AQ. format since June 2026)
@@ -188,7 +237,8 @@ export async function extractJourneyIntent(
     return parseIntentRuleBased(
       userPrompt,
       currentDestination,
-      `API key format unrecognized (starts with '${prefix}'). Expected 'AIzaSy...' or 'AQ.' prefix. Using local NLP engine.`
+      `API key format unrecognized (starts with '${prefix}'). Expected 'AIzaSy...' or 'AQ.' prefix. Using local NLP engine.`,
+      userLocation
     );
   }
 
@@ -235,17 +285,29 @@ Never include markdown code fences or backticks. Only output the raw JSON object
     let activeModelUsed = "gemini-3.5-flash";
 
     for (const m of candidateModels) {
-      try {
-        const model = genAI.getGenerativeModel({ model: m });
-        result = await model.generateContent([
-          { text: systemPrompt },
-          { text: userPrompt },
-        ]);
-        activeModelUsed = m;
-        break;
-      } catch (modelErr: any) {
-        console.warn(`[Gemini Provider] Model ${m} busy/unavailable (${modelErr.message?.substring(0, 80)}), trying fallback model...`);
+      let attempts = 0;
+      while (attempts < 2) {
+        try {
+          const model = genAI.getGenerativeModel({ model: m });
+          result = await model.generateContent([
+            { text: systemPrompt },
+            { text: userPrompt },
+          ]);
+          activeModelUsed = m;
+          break;
+        } catch (modelErr: any) {
+          attempts++;
+          const is503 = modelErr.message?.includes("503") || modelErr.message?.includes("high demand");
+          if (is503 && attempts < 2) {
+            console.warn(`[Gemini Provider] Model ${m} got 503 high demand spike, retrying in 1s...`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
+          }
+          console.error(`[Gemini Provider] Model ${m} failed:`, modelErr.message || modelErr);
+          break;
+        }
       }
+      if (result) break;
     }
 
     if (!result) {
@@ -299,7 +361,8 @@ Never include markdown code fences or backticks. Only output the raw JSON object
     return parseIntentRuleBased(
       userPrompt,
       currentDestination,
-      `Gemini request failed: ${err.message || "Network/Rate Limit error"}. Local NLP engine active.`
+      `Gemini request failed: ${err.message || "Network/Rate Limit error"}. Local NLP engine active.`,
+      userLocation
     );
   }
 }
