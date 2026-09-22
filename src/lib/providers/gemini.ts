@@ -175,7 +175,7 @@ export async function extractJourneyIntent(
   const apiKey = (customKey || process.env.GEMINI_API_KEY || "").trim();
 
   // Validate key existence
-  if (!apiKey || apiKey.includes("your_gemini_api_key")) {
+  if (!apiKey) {
     return parseIntentRuleBased(userPrompt, currentDestination, "No API key configured. Built-in NLP active.");
   }
 
@@ -194,7 +194,6 @@ export async function extractJourneyIntent(
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
 
     const userLocStr = userLocation
       ? `${userLocation.city || "Nagpur"}, ${userLocation.region || "Maharashtra"}, ${userLocation.country || "India"} (Coordinates: ${userLocation.coordinate?.lat || 21.1463}, ${userLocation.coordinate?.lng || 79.0849})`
@@ -231,10 +230,27 @@ Respond strictly with a single valid JSON object in this exact schema:
 }
 Never include markdown code fences or backticks. Only output the raw JSON object.`;
 
-    const result = await model.generateContent([
-      { text: systemPrompt },
-      { text: userPrompt },
-    ]);
+    const candidateModels = ["gemini-3.5-flash", "gemini-3.6-flash"];
+    let result: any = null;
+    let activeModelUsed = "gemini-3.5-flash";
+
+    for (const m of candidateModels) {
+      try {
+        const model = genAI.getGenerativeModel({ model: m });
+        result = await model.generateContent([
+          { text: systemPrompt },
+          { text: userPrompt },
+        ]);
+        activeModelUsed = m;
+        break;
+      } catch (modelErr: any) {
+        console.warn(`[Gemini Provider] Model ${m} busy/unavailable (${modelErr.message?.substring(0, 80)}), trying fallback model...`);
+      }
+    }
+
+    if (!result) {
+      throw new Error("Candidate Gemini models busy or high demand spike.");
+    }
 
     const rawText = result.response.text().trim();
     const cleanJson = rawText.replace(/^```json\s*/, "").replace(/```$/, "").trim();
@@ -273,7 +289,7 @@ Never include markdown code fences or backticks. Only output the raw JSON object
       diagnostics: {
         status: "connected",
         engine: "gemini",
-        message: `Connected to Gemini 3.6 Flash (${latency}ms)`,
+        message: `Connected to Google ${activeModelUsed} (${latency}ms)`,
         keyPrefix: apiKey.substring(0, 6),
         latencyMs: latency,
       },
