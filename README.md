@@ -187,8 +187,6 @@ Wayve/
 - **Presentation Deck:** Detailed slide-by-slide guide structured for the SIT PBL presentation is available in [`ppt.md`](ppt.md).
 - **Institution:** Symbiosis Institute of Technology (SIT), Nagpur Campus.
 - **Author:** Kaustubh Kachole (PRN: `24070521098`)
-- **Faculty Guide:** Dr. Parag Naik (*Assistant Professor, Dept. of CSE*)
-
 ---
 
 ## 📄 License
