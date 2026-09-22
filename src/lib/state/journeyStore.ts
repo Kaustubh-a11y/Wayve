@@ -1139,21 +1139,22 @@ export const journeyActions = {
       if (parsed.stopsRequested && parsed.stopsRequested.length > 0 && curDest) {
         const { searchPlaces } = await import("../providers/mapbox");
         for (const stopQuery of parsed.stopsRequested) {
-          const midPoint = {
-            lat: (curOrigin.coordinate.lat + curDest.coordinate.lat) / 2,
-            lng: (curOrigin.coordinate.lng + curDest.coordinate.lng) / 2,
-          };
-          const stopResults = await searchPlaces(`${stopQuery}`, midPoint);
+          // Search for intermediate stops (e.g. Starbucks, fuel) strictly nearing the user's current location
+          const stopResults = await searchPlaces(`${stopQuery}`, curOrigin.coordinate);
           if (stopResults.length > 0) {
-            const match = stopResults[0];
+            // Sort by proximity from user's current location ascending to get the closest stop
+            const sortedByNear = [...stopResults].sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0));
+            const match = sortedByNear[0];
             const newStop: Stop = {
               id: `stop-ai-${Date.now()}-${Math.random()}`,
               name: match.name,
               type: match.name.toLowerCase().includes("starbucks") || match.name.toLowerCase().includes("coffee") ? "coffee" : "food",
               coordinate: match.coordinate,
+              address: match.address,
               detourMinutes: 4,
               rating: 4.8,
               added: true,
+              visited: false,
             };
             updateStore((prev) => ({
               stops: [...prev.stops.filter((s) => s.id !== newStop.id), newStop],

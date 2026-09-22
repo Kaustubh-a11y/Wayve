@@ -205,11 +205,11 @@ Convert user natural language travel queries into structured route objectives.
 USER'S SURROUNDING LOCATION: ${userLocStr}.
 Current destination context: ${currentDestination || "None"}
 
-CRITICAL RULE FOR SURROUNDINGS & POIs:
+CRITICAL RULE FOR SURROUNDINGS & PROXIMITY:
 The user is located in ${userLocStr}.
-All route planning, intermediate stops (e.g. coffee, Starbucks, food, fuel, EV charging), and road suggestions MUST be strictly grounded in the user's surrounding region and corridor.
-NEVER suggest locations, cities, or businesses in other countries (like Australia or the USA) unless the user explicitly names that international location.
-For example, if the user asks to "stop by Starbucks", they mean a Starbucks or coffee stop in/near their city or along their route corridor, NOT in Australia or overseas.
+All route planning, intermediate stops (e.g. coffee, Starbucks, food, fuel, EV charging), and road suggestions MUST be strictly grounded in the user's surrounding region and corridor, prioritized by PROXIMITY NEAREST to the user's current starting location (within 1 to 5 km radius).
+NEVER suggest locations, cities, or businesses in other countries or far away cities unless the user explicitly names that distant location.
+For example, if the user asks to "stop by Starbucks", resolve to the nearest Starbucks branch within their immediate city surroundings, NOT in another city or overseas.
 
 Respond strictly with a single valid JSON object in this exact schema:
 {

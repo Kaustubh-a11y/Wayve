@@ -464,7 +464,7 @@ export async function getDirections(
   if (hasValidMapboxToken) {
     try {
       const mbUrl = `https://api.mapbox.com/directions/v5/mapbox/${mapboxProfile}/${coords}?alternatives=true&geometries=geojson&steps=true&overview=full&annotations=congestion,distance,duration&access_token=${token}`;
-      const mbRes = await fetch(mbUrl, { signal: AbortSignal.timeout(4000) });
+      const mbRes = await fetch(mbUrl, { signal: AbortSignal.timeout(7500) });
       if (mbRes.ok) {
         const mbData = await mbRes.json();
         if (mbData.routes && mbData.routes.length > 0) {
@@ -489,9 +489,12 @@ export async function getDirections(
   // 2. Query parallel arterial probes (OSRM guarantees real-road geometry across all corridors)
   const probeUrls: string[] = [];
 
-  // Always add a direct OSRM query with alternatives and continue_straight=false for local roads
+  // Always add direct OSRM queries on multiple reliable nodes
   probeUrls.push(
     `https://router.project-osrm.org/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&steps=true&alternatives=true&continue_straight=false`
+  );
+  probeUrls.push(
+    `https://routing.openstreetmap.de/routed-car/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&steps=true&alternatives=true&continue_straight=false`
   );
 
   // Probe via perpendicular waypoints with continue_straight=false to force local road discovery
@@ -505,7 +508,7 @@ export async function getDirections(
   if (isShortRoute && hasValidMapboxToken && validWaypoints.length === 0) {
     try {
       const excludeUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?alternatives=true&geometries=geojson&steps=true&overview=full&exclude=motorway&access_token=${token}`;
-      const excludeRes = await fetch(excludeUrl, { signal: AbortSignal.timeout(3500) });
+      const excludeRes = await fetch(excludeUrl, { signal: AbortSignal.timeout(6000) });
       if (excludeRes.ok) {
         const excludeData = await excludeRes.json();
         if (excludeData.routes) {
@@ -529,7 +532,7 @@ export async function getDirections(
   if (probeUrls.length > 0) {
     try {
       const probeResponses = await Promise.allSettled(
-        probeUrls.map((u) => fetch(u, { signal: AbortSignal.timeout(3500) }).then((r) => r.json()))
+        probeUrls.map((u) => fetch(u, { signal: AbortSignal.timeout(7500) }).then((r) => r.json()))
       );
       for (const res of probeResponses) {
         if (res.status === "fulfilled" && res.value?.routes) {
