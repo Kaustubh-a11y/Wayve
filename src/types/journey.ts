@@ -58,6 +58,8 @@ export interface Stop {
   address?: string;
   rating?: number;
   added: boolean;
+  visited?: boolean;
+  order?: number;
 }
 
 export interface Maneuver {

@@ -188,6 +188,7 @@ export function computePolylineDistanceMeters(coords: [number, number][]): numbe
 export function synthesize10AgentRoutes(
   origin: { lat: number; lng: number } = DEFAULT_ORIGIN.coordinate,
   destination: { lat: number; lng: number } = DETERMINISTIC_DESTINATIONS[0].coordinate,
+  waypoints: { lat: number; lng: number }[] = [],
   baseDistance?: number,
   baseDuration?: number,
   baseGeometry?: [number, number][],
@@ -195,6 +196,7 @@ export function synthesize10AgentRoutes(
 ): RouteOption[] {
   const startPt: [number, number] = [origin.lng, origin.lat];
   const endPt: [number, number] = [destination.lng, destination.lat];
+  const wpPts: [number, number][] = waypoints.map(wp => [wp.lng, wp.lat]);
 
   const dLng = endPt[0] - startPt[0];
   const dLat = endPt[1] - startPt[1];
@@ -216,8 +218,22 @@ export function synthesize10AgentRoutes(
 
   // Fallback ONLY if zero road geometry could be fetched: orthogonal street grid (never curved air routes)
   const createOrthogonalStreetPath = (): [number, number][] => {
-    const midPoint: [number, number] = [endPt[0], startPt[1]];
-    return [startPt, midPoint, endPt];
+    if (wpPts.length > 0) {
+      // Connect through waypoints sequentially
+      const path: [number, number][] = [startPt];
+      let currentPt = startPt;
+      for (const wp of wpPts) {
+        path.push([wp[0], currentPt[1]]); // orthogonal step from current point to waypoint
+        path.push(wp);
+        currentPt = wp;
+      }
+      path.push([endPt[0], currentPt[1]]);
+      path.push(endPt);
+      return path;
+    } else {
+      const midPoint: [number, number] = [endPt[0], startPt[1]];
+      return [startPt, midPoint, endPt];
+    }
   };
 
   const getGeometryForIndex = (index: number): [number, number][] => {
@@ -522,7 +538,8 @@ export function synthesize10AgentRoutes(
 
 export function getDeterministicRoutes(
   origin: { lat: number; lng: number } = DEFAULT_ORIGIN.coordinate,
-  destination: { lat: number; lng: number } = DETERMINISTIC_DESTINATIONS[0].coordinate
+  destination: { lat: number; lng: number } = DETERMINISTIC_DESTINATIONS[0].coordinate,
+  waypoints: { lat: number; lng: number }[] = []
 ): RouteOption[] {
-  return synthesize10AgentRoutes(origin, destination);
+  return synthesize10AgentRoutes(origin, destination, waypoints);
 }

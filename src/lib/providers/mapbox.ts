@@ -582,6 +582,7 @@ export async function getDirections(
     const tenRoutes = synthesize10AgentRoutes(
       origin,
       destination,
+      validWaypoints,
       primaryDistance,
       primaryDuration,
       primaryGeom,
@@ -614,5 +615,5 @@ export async function getDirections(
   }
 
   // Pure Offline fallback: Synthesize full 10-Route AI Agent Portfolio
-  return synthesize10AgentRoutes(origin, destination);
+  return synthesize10AgentRoutes(origin, destination, validWaypoints);
 }

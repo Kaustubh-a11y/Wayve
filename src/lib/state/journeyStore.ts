@@ -91,6 +91,7 @@ export interface JourneyStoreState {
   demoStep: number;
   isReplaying: boolean;
   replaySpeed: number;
+  simSpeedKmh: number;
   isTrafficLayerVisible: boolean;
   savedPlaces: Destination[];
 }
@@ -207,6 +208,7 @@ let globalStore: JourneyStoreState = {
   demoStep: 0,
   isReplaying: false,
   replaySpeed: 1,
+  simSpeedKmh: 60,
   isTrafficLayerVisible: false,
 };
 
@@ -399,6 +401,26 @@ export function useJourneyStore() {
       updateStore({ replaySpeed });
     },
 
+    setSimSpeedKmh: (simSpeedKmh: number) => {
+      updateStore({ simSpeedKmh: Math.max(10, Math.min(220, simSpeedKmh)) });
+    },
+
+    markCheckpointVisited: (stopId: string) => {
+      updateStore((prev) => ({
+        stops: prev.stops.map((s) => (s.id === stopId ? { ...s, visited: true } : s)),
+      }));
+    },
+
+    skipNextCheckpoint: () => {
+      updateStore((prev) => {
+        const nextPending = prev.stops.find((s) => s.added && !s.visited);
+        if (!nextPending) return {};
+        return {
+          stops: prev.stops.map((s) => (s.id === nextPending.id ? { ...s, visited: true } : s)),
+        };
+      });
+    },
+
     seekProgress: (progress: number) => {
       const clamped = Math.max(0, Math.min(1, progress));
       updateStore((prev) => {
@@ -411,25 +433,38 @@ export function useJourneyStore() {
         const nextBearing = getRouteSegmentBearing(geom, ptIdx);
         const totalManeuvers = prev.activeRoute.maneuvers?.length || 5;
         const maneuverIdx = Math.min(totalManeuvers - 1, Math.floor(clamped * totalManeuvers));
+        const baseSpeed = prev.simSpeedKmh || 60;
 
         return {
           routeProgress: clamped,
           currentLocation: { lat, lng },
           bearing: nextBearing,
           currentManeuverIndex: maneuverIdx,
-          currentSpeedKmh: clamped >= 0.98 ? 0 : Math.round(58 + Math.random() * 8),
+          currentSpeedKmh: clamped >= 0.98 ? 0 : Math.round(baseSpeed + (Math.random() - 0.5) * 6),
         };
       });
     },
 
-    tickReplay: (deltaPercent: number = 0.012) => {
+    tickReplay: (deltaSeconds: number = 0.5) => {
       updateStore((prev) => {
         if (!prev.isReplaying || (prev.journeyState !== "NAVIGATING" && prev.journeyState !== "MONITORING")) {
           return {};
         }
 
-        const nextProgress = Math.min(1.0, prev.routeProgress + deltaPercent * (prev.replaySpeed || 1));
-        if (nextProgress >= 0.99) {
+        const route = prev.activeRoute;
+        const totalDistanceMeters = route?.distanceMeters || 15000;
+        const baseSpeedKmh = prev.simSpeedKmh || 60;
+        const multiplier = prev.replaySpeed || 1;
+
+        // Effective speed in m/s: (baseSpeedKmh km/h) * multiplier / 3.6
+        // e.g. At 1x, 60 km/h = 16.67 m/s. In 0.5s dt => 8.33m moved.
+        // On a 15 km trip, progress delta = 8.33 / 15000 = ~0.00055
+        const speedMs = (baseSpeedKmh / 3.6) * multiplier;
+        const distanceCovered = speedMs * deltaSeconds;
+        const progressDelta = distanceCovered / Math.max(totalDistanceMeters, 500);
+
+        const nextProgress = Math.min(1.0, prev.routeProgress + progressDelta);
+        if (nextProgress >= 0.995) {
           journeyActions.arriveAtDestination();
           return { isReplaying: false, routeProgress: 1.0, currentSpeedKmh: 0 };
         }
@@ -440,12 +475,50 @@ export function useJourneyStore() {
         let maneuverIdx = prev.currentManeuverIndex;
 
         if (geom && geom.length > 1) {
-          const ptIdx = Math.min(geom.length - 1, Math.floor(nextProgress * (geom.length - 1)));
-          const [lng, lat] = geom[ptIdx];
-          nextCoord = { lat, lng };
-          nextBearing = getRouteSegmentBearing(geom, ptIdx);
+          // Distance-based interpolation along route points
+          const totalPts = geom.length;
+          const targetFloatIdx = nextProgress * (totalPts - 1);
+          const baseIdx = Math.floor(targetFloatIdx);
+          const nextIdx = Math.min(totalPts - 1, baseIdx + 1);
+          const remainder = targetFloatIdx - baseIdx;
+          
+          if (baseIdx >= totalPts - 1) {
+            nextCoord = { lat: geom[totalPts - 1][1], lng: geom[totalPts - 1][0] };
+            nextBearing = getRouteSegmentBearing(geom, totalPts - 2);
+          } else {
+            const [lng1, lat1] = geom[baseIdx];
+            const [lng2, lat2] = geom[nextIdx];
+            
+            // Linear interpolate between the two coordinates
+            nextCoord = {
+              lat: lat1 + (lat2 - lat1) * remainder,
+              lng: lng1 + (lng2 - lng1) * remainder,
+            };
+            nextBearing = getRouteSegmentBearing(geom, baseIdx);
+          }
+          
           const totalManeuvers = prev.activeRoute?.maneuvers?.length || 5;
           maneuverIdx = Math.min(totalManeuvers - 1, Math.floor(nextProgress * totalManeuvers));
+        }
+
+        // Live speedometer jitter around the user's chosen speed:
+        const jitter = Math.sin(nextProgress * 50) * 3 + (Math.random() - 0.5) * 4;
+        const displaySpeedKmh = Math.max(5, Math.round(baseSpeedKmh + jitter));
+
+        // Automatic Checkpoint Detection:
+        let updatedStops = prev.stops;
+        if (prev.stops.some((s) => s.added && !s.visited)) {
+          updatedStops = prev.stops.map((stop) => {
+            if (stop.added && !stop.visited) {
+              const dLat = (stop.coordinate.lat - nextCoord.lat) * 111000;
+              const dLng = (stop.coordinate.lng - nextCoord.lng) * 111000 * Math.cos((nextCoord.lat * Math.PI) / 180);
+              const distMeters = Math.hypot(dLat, dLng);
+              if (distMeters < 350) {
+                return { ...stop, visited: true };
+              }
+            }
+            return stop;
+          });
         }
 
         return {
@@ -453,7 +526,8 @@ export function useJourneyStore() {
           currentLocation: nextCoord,
           bearing: nextBearing,
           currentManeuverIndex: maneuverIdx,
-          currentSpeedKmh: Math.round(62 + Math.sin(nextProgress * 25) * 8),
+          currentSpeedKmh: displaySpeedKmh,
+          stops: updatedStops,
           journeyState: "MONITORING",
         };
       });
@@ -969,19 +1043,11 @@ export const journeyActions = {
 
       // Check if this is a multi-stop city tour / pandal loop
       if (parsed.isTour && parsed.tourWaypoints && parsed.tourWaypoints.length > 0) {
-        const tourStops: Stop[] = parsed.tourWaypoints.map((wp: { name: string; address?: string; coordinate: Coordinate }, idx: number) => ({
-          id: `stop-tour-${idx + 1}-${Date.now()}`,
-          name: wp.name,
-          address: wp.address,
-          type: "pandal" as const,
-          coordinate: wp.coordinate,
-          detourMinutes: 0,
-          rating: 4.9,
-          added: true,
-        }));
-
         let tourDest: Destination;
+        let stopsList: Array<{ name: string; address?: string; coordinate: Coordinate }>;
+
         if (parsed.isRoundTrip) {
+          stopsList = parsed.tourWaypoints;
           tourDest = {
             id: `dest-tour-roundtrip-${Date.now()}`,
             name: `${curOrigin.name} (Round-Trip Return)`,
@@ -992,6 +1058,7 @@ export const journeyActions = {
           };
         } else {
           const lastWp = parsed.tourWaypoints[parsed.tourWaypoints.length - 1];
+          stopsList = parsed.tourWaypoints.slice(0, -1);
           tourDest = {
             id: `dest-tour-${Date.now()}`,
             name: lastWp.name,
@@ -1001,6 +1068,19 @@ export const journeyActions = {
             rating: 4.9,
           };
         }
+
+        const tourStops: Stop[] = stopsList.map((wp, idx: number) => ({
+          id: `stop-tour-${idx + 1}-${Date.now()}`,
+          name: wp.name,
+          address: wp.address,
+          type: "pandal" as const,
+          coordinate: wp.coordinate,
+          detourMinutes: 0,
+          rating: 4.9,
+          added: true,
+          visited: false,
+          order: idx + 1,
+        }));
 
         updateStore({
           destination: tourDest,
@@ -1149,7 +1229,11 @@ export const journeyActions = {
         planningStep: "routes",
       });
     } catch {
-      const fallback = (await import("../services/deterministicData")).getDeterministicRoutes(origin, destination.coordinate);
+      const fallback = (await import("../services/deterministicData")).getDeterministicRoutes(
+        origin, 
+        destination.coordinate,
+        activeWaypoints
+      );
       const scored = scoreRoutes(fallback, globalStore.journeyMode);
       const best = scored.find((r) => r.isWayvePick) || scored[0];
       const initialBearing = best?.geometry && best.geometry.length > 1 ? getRouteSegmentBearing(best.geometry, 0) : 0;

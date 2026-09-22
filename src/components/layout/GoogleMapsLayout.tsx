@@ -7,18 +7,27 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  ArrowUp,
+  ArrowUpLeft,
+  ArrowUpRight,
   Car,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock,
   Compass,
+  CornerDownLeft,
+  CornerDownRight,
+  CornerUpLeft,
   CornerUpRight,
+  Flag,
   Gauge,
   Info,
   Leaf,
   List,
   MapPin,
   Menu,
+  Milestone,
   Moon,
   Navigation,
   Pause,
@@ -27,8 +36,10 @@ import {
   RotateCcw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Sparkles,
   Sun,
+  Undo2,
   Volume2,
   VolumeX,
   X,
@@ -51,6 +62,9 @@ export const GoogleMapsLayout: React.FC = () => {
     planTripWithAI,
     toggleReplay,
     setReplaySpeed,
+    setSimSpeedKmh,
+    skipNextCheckpoint,
+    markCheckpointVisited,
     tickReplay,
     injectSimulationIncident,
     switchRoute,
@@ -87,6 +101,8 @@ export const GoogleMapsLayout: React.FC = () => {
   const [isMobileRoutesExpanded, setIsMobileRoutesExpanded] = useState(false);
   const [isMobileDirectionsCollapsed, setIsMobileDirectionsCollapsed] = useState(true);
   const [isNavStepsOpen, setIsNavStepsOpen] = useState(false);
+  const [isCheckpointsSheetOpen, setIsCheckpointsSheetOpen] = useState(false);
+  const [isNavSpeedPopoverOpen, setIsNavSpeedPopoverOpen] = useState(false);
   const [showTrafficIntel, setShowTrafficIntel] = useState(false);
   const [voiceCast, setVoiceCastState] = useState<VoiceCast>("american");
 
@@ -104,13 +120,10 @@ export const GoogleMapsLayout: React.FC = () => {
       setDestinationQuery(state.destination.name);
       setSelectedPlace(state.destination);
     }
-  }, [state.destination]);
-
-  useEffect(() => {
     if (state.origin) {
-      setOriginQuery(state.origin.name || "Your location");
+      setOriginQuery(state.origin.name);
     }
-  }, [state.origin]);
+  }, [state.destination, state.origin]);
 
   // If routes are ready and we aren't navigating, show directions mode
   useEffect(() => {
@@ -119,26 +132,16 @@ export const GoogleMapsLayout: React.FC = () => {
     }
   }, [state.routes.length, isNavigating]);
 
-  // Debounced search query for whichever input is actively focused (suppressed after selection)
+  // Master debounce search suggestion fetcher
   useEffect(() => {
-    let q = "";
-    if (activeSearchTarget === "origin") {
-      q = originQuery.trim();
-    } else if (activeSearchTarget === "destination") {
-      q = destinationQuery.trim();
-    } else {
-      q = searchQuery.trim();
-    }
+    const activeQuery =
+      activeSearchTarget === "origin"
+        ? originQuery
+        : activeSearchTarget === "destination"
+        ? destinationQuery
+        : searchQuery;
 
-    if (
-      suppressSuggestionsRef.current ||
-      isDirectionsMode ||
-      !q ||
-      q.length < 2 ||
-      q.includes("Your location") ||
-      (state.destination && q.toLowerCase() === state.destination.name.toLowerCase()) ||
-      (selectedPlace && q.toLowerCase() === selectedPlace.name.toLowerCase())
-    ) {
+    if (!activeQuery.trim() || activeQuery.length < 2 || suppressSuggestionsRef.current) {
       setSuggestions([]);
       return;
     }
@@ -146,7 +149,7 @@ export const GoogleMapsLayout: React.FC = () => {
     const timer = setTimeout(async () => {
       try {
         const { searchPlaces } = await import("@/lib/providers/mapbox");
-        const results = await searchPlaces(q, state.origin?.coordinate, "in");
+        const results = await searchPlaces(activeQuery, state.origin?.coordinate);
         if (!suppressSuggestionsRef.current) {
           setSuggestions(results);
         }
@@ -158,12 +161,12 @@ export const GoogleMapsLayout: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchQuery, originQuery, destinationQuery, activeSearchTarget, state.origin?.coordinate, isDirectionsMode, state.destination, selectedPlace]);
 
-  // Automated drive replay loop when navigating (simulation mode only, opt-in)
+  // Automated drive replay loop when navigating (single master physics-based loop)
   useEffect(() => {
     if (!state.isReplaying || !isNavigating) return;
     const interval = setInterval(() => {
-      tickReplay(0.008);
-    }, 500);
+      tickReplay(0.4);
+    }, 400);
     return () => clearInterval(interval);
   }, [state.isReplaying, isNavigating, tickReplay]);
 
@@ -310,6 +313,56 @@ export const GoogleMapsLayout: React.FC = () => {
 
   const activeRoute = state.activeRoute || state.routes[0];
   const activeStops = state.stops.filter((s) => s.added);
+
+  const getManeuverIcon = (instruction?: string, modifier?: string, type?: string) => {
+    const text = (instruction || "").toLowerCase();
+    const mod = (modifier || "").toLowerCase();
+    const t = (type || "").toLowerCase();
+
+    if (t === "arrive" || text.includes("arrived") || text.includes("destination") || text.includes("reached")) {
+      return <Flag className="w-7 h-7 text-emerald-300" />;
+    }
+    if (mod.includes("sharp left") || text.includes("sharp left")) {
+      return <CornerDownLeft className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("slight left") || text.includes("slight left") || text.includes("bear left") || text.includes("keep left")) {
+      return <ArrowUpLeft className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("left") || text.includes("turn left") || text.includes("left onto") || text.includes("take left")) {
+      return <CornerUpLeft className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("sharp right") || text.includes("sharp right")) {
+      return <CornerDownRight className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("slight right") || text.includes("slight right") || text.includes("bear right") || text.includes("keep right")) {
+      return <ArrowUpRight className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("right") || text.includes("turn right") || text.includes("right onto") || text.includes("take right")) {
+      return <CornerUpRight className="w-7 h-7 text-white" />;
+    }
+    if (mod.includes("uturn") || mod.includes("u-turn") || text.includes("u-turn")) {
+      return <Undo2 className="w-7 h-7 text-white" />;
+    }
+    if (t === "roundabout" || text.includes("roundabout") || text.includes("rotary")) {
+      return <RotateCcw className="w-7 h-7 text-white" />;
+    }
+    return <ArrowUp className="w-7 h-7 text-white" />;
+  };
+
+  const getNextManeuverDistanceText = () => {
+    if (!activeRoute?.maneuvers || activeRoute.maneuvers.length === 0) return "Ahead";
+    const currentManeuver = activeRoute.maneuvers[state.currentManeuverIndex];
+    if (!currentManeuver) return "Ahead";
+    
+    const totalManeuvers = activeRoute.maneuvers.length;
+    const currentStepFrac = (state.currentManeuverIndex + 1) / totalManeuvers;
+    const remainingFrac = Math.max(0, currentStepFrac - state.routeProgress);
+    const remainingDist = Math.max(30, Math.round(remainingFrac * activeRoute.distanceMeters));
+    
+    if (remainingDist < 50) return "Turn now";
+    if (remainingDist < 1000) return `In ${Math.round(remainingDist / 10) * 10} m`;
+    return `In ${(remainingDist / 1000).toFixed(1)} km`;
+  };
 
   const displayedRoutes = state.routes.filter((route) => {
     if (activeFilter === "all") return true;
@@ -537,20 +590,23 @@ export const GoogleMapsLayout: React.FC = () => {
                     />
                   </div>
 
-                  {/* Intermediate Stops (A, B, C...) */}
+                  {/* Intermediate Checkpoints (1, 2, 3...) */}
                   {activeStops.map((stop, idx) => (
                     <div key={stop.id} className="relative flex items-center gap-2">
-                      <div className="absolute -left-6 w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">
-                        {String.fromCharCode(65 + idx)}
+                      <div className="absolute -left-6 w-3.5 h-3.5 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center shadow-sm">
+                        {idx + 1}
                       </div>
-                      <div className={`w-full text-xs font-medium py-1.5 px-3.5 rounded-full border flex items-center justify-between ${
-                        isLight ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-slate-800 border-slate-700 text-slate-200"
+                      <div className={`w-full text-xs font-semibold py-1.5 px-3.5 rounded-full border flex items-center justify-between ${
+                        isLight ? "bg-amber-50/60 border-amber-200/80 text-slate-800" : "bg-amber-950/20 border-amber-800/50 text-slate-200"
                       }`}>
-                        <span className="truncate">{stop.name}</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase">CP {idx + 1}:</span>
+                          <span className="truncate">{stop.name}</span>
+                        </div>
                         <button
                           onClick={() => removeStop(stop.id)}
-                          className="text-slate-400 hover:text-red-500 ml-2"
-                          title="Remove stop"
+                          className="text-slate-400 hover:text-red-500 ml-2 shrink-0 p-0.5"
+                          title="Remove checkpoint"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
@@ -594,23 +650,33 @@ export const GoogleMapsLayout: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Add Stop Button / Inline Form */}
-                <div className="pt-1 flex items-center justify-between text-xs">
+                {/* Add Checkpoint Button / Inline Form */}
+                <div className="pt-1 flex flex-col gap-1.5 text-xs">
                   {!isAddingStop ? (
-                    <button
-                      onClick={() => setIsAddingStop(true)}
-                      className="text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1.5"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add stop (e.g. Starbucks)</span>
-                    </button>
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={() => setIsAddingStop(true)}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Checkpoint</span>
+                      </button>
+
+                      <button
+                        onClick={() => setIsAiDrawerOpen(true)}
+                        className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-1.5"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Ask AI Agent</span>
+                      </button>
+                    </div>
                   ) : (
                     <form onSubmit={handleAddStopSubmit} className="flex items-center gap-1.5 w-full">
                       <input
                         type="text"
                         value={newStopQuery}
                         onChange={(e) => setNewStopQuery(e.target.value)}
-                        placeholder="e.g. Starbucks, Shell Fuel..."
+                        placeholder="Checkpoint name (e.g. Starbucks, Shell Fuel)..."
                         autoFocus
                         className={`w-full text-xs py-1.5 px-3 rounded-full border focus:outline-none ${
                           isLight ? "bg-slate-50 border-slate-200" : "bg-slate-800 border-slate-700"
@@ -618,27 +684,42 @@ export const GoogleMapsLayout: React.FC = () => {
                       />
                       <button
                         type="submit"
-                        className="px-3 py-1.5 bg-blue-600 text-white rounded-full text-xs font-semibold hover:bg-blue-700 shadow-sm"
+                        className="px-3 py-1.5 bg-blue-600 text-white rounded-full text-xs font-semibold hover:bg-blue-700 shadow-sm shrink-0"
                       >
                         Add
                       </button>
                       <button
                         type="button"
                         onClick={() => setIsAddingStop(false)}
-                        className="p-1 text-slate-400 hover:text-slate-600 rounded-full"
+                        className="p-1 text-slate-400 hover:text-slate-600 rounded-full shrink-0"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </form>
                   )}
 
-                  <button
-                    onClick={() => setIsAiDrawerOpen(true)}
-                    className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-1.5"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Ask AI Agent</span>
-                  </button>
+                  {/* Quick Checkpoint Presets Chips */}
+                  <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
+                    <span className="text-[10px] text-slate-400 font-bold shrink-0">Quick CP:</span>
+                    <button
+                      onClick={() => handleCategorySearch("Starbucks Coffee")}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 whitespace-nowrap hover:bg-amber-500/20 transition-all"
+                    >
+                      + ☕ Starbucks
+                    </button>
+                    <button
+                      onClick={() => handleCategorySearch("Fuel Petrol Station")}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20 whitespace-nowrap hover:bg-blue-500/20 transition-all"
+                    >
+                      + ⛽ Fuel
+                    </button>
+                    <button
+                      onClick={() => handleAiPlan("Plan a route visiting the top Ganpati pandals in Nagpur")}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 whitespace-nowrap hover:bg-emerald-500/20 transition-all"
+                    >
+                      + 🛕 Pandals Tour
+                    </button>
+                  </div>
                 </div>
               </div>
               </div>
@@ -694,9 +775,9 @@ export const GoogleMapsLayout: React.FC = () => {
             </div>
           )}
 
-          {/* Docked Left Drawer: AI Traffic Route Recommendation Portfolio (10 Distinct Routes) */}
+          {/* AI Traffic Route Recommendation Portfolio (10 Distinct Routes) — positioned to right side */}
           {state.routes.length > 0 && isDirectionsMode && (
-            <div className={`pointer-events-auto rounded-2xl shadow-2xl border p-3 sm:p-4 flex flex-col gap-2.5 sm:gap-3 max-h-[45vh] sm:max-h-[calc(100vh-270px)] overflow-y-auto ${
+            <div className={`pointer-events-auto fixed top-4 right-4 sm:w-[420px] w-[calc(100vw-16px)] z-[40] rounded-2xl shadow-2xl border p-3 sm:p-4 flex flex-col gap-2.5 sm:gap-3 max-h-[85vh] overflow-y-auto ${
               isLight ? "bg-white/95 border-slate-200/90 text-slate-800" : "bg-[#1e293b]/95 border-slate-700/80 text-white"
             } backdrop-blur-xl`}>
               
@@ -729,8 +810,31 @@ export const GoogleMapsLayout: React.FC = () => {
                 </div>
 
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                  To <span className="font-semibold text-slate-700 dark:text-slate-200">{state.destination?.name}</span> {activeStops.length > 0 ? `· via ${activeStops.length} stop(s)` : ""}
+                  To <span className="font-semibold text-slate-700 dark:text-slate-200">{state.destination?.name}</span> {activeStops.length > 0 ? `· via ${activeStops.length} checkpoint(s)` : ""}
                 </p>
+
+                {/* Multi-Stop Checkpoint Route Summary Card */}
+                {activeStops.length > 0 && (
+                  <div className="rounded-xl border p-2.5 bg-amber-500/10 border-amber-500/25 text-xs flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-amber-700 dark:text-amber-300 flex items-center gap-1 text-[11px]">
+                        🚩 Multi-Stop Checkpoints ({activeStops.length})
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-semibold">Ordered Waypoints</span>
+                    </div>
+                    <div className="flex flex-col gap-1 max-h-28 overflow-y-auto pr-1">
+                      {activeStops.map((stop, idx) => (
+                        <div key={stop.id} className="flex items-center gap-2 text-[11px] text-slate-700 dark:text-slate-200 bg-white/50 dark:bg-slate-800/50 p-1.5 rounded-lg border border-amber-500/20">
+                          <span className="w-4 h-4 rounded-full bg-amber-500 text-white font-black text-[9px] flex items-center justify-center shrink-0 shadow-sm">
+                            {idx + 1}
+                          </span>
+                          <span className="truncate flex-1 font-semibold">{stop.name}</span>
+                          <span className="text-[10px] text-slate-400 shrink-0">CP {idx + 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Quick-Filter Strategy Pill Bar */}
                 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
@@ -995,7 +1099,7 @@ export const GoogleMapsLayout: React.FC = () => {
                                   <span className="text-[9px] text-slate-400 block font-semibold">Coordination</span>
                                 </div>
                                 <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60">
-                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Queue Net</span>
+                                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Vehicle Build-up</span>
                                   <span className="text-xs font-black text-amber-600 dark:text-amber-400">
                                     {route.realisticTraffic.totalQueueLengthMeters}m
                                   </span>
@@ -1221,26 +1325,50 @@ export const GoogleMapsLayout: React.FC = () => {
           {/* Top Green Navigation Maneuver Banner */}
           <div className="absolute top-3 left-3 right-3 sm:left-6 sm:right-auto sm:w-[460px] z-30 pointer-events-auto">
             <div className="bg-[#0d652d] text-white rounded-2xl p-4 shadow-2xl border border-emerald-500/30 flex items-start gap-3.5">
-              <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                <CornerUpRight className="w-7 h-7 text-white" />
+              <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center shrink-0 mt-0.5 shadow-inner">
+                {getManeuverIcon(
+                  activeRoute?.maneuvers?.[state.currentManeuverIndex]?.instruction,
+                  activeRoute?.maneuvers?.[state.currentManeuverIndex]?.modifier,
+                  activeRoute?.maneuvers?.[state.currentManeuverIndex]?.type
+                )}
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <p className="text-xl font-black tracking-tight leading-none mb-1">
-                  In 450 m
+                  {getNextManeuverDistanceText()}
                 </p>
-                <p className="text-sm font-semibold text-emerald-100 leading-snug">
+                <p className="text-sm font-semibold text-emerald-100 leading-snug truncate">
                   {activeRoute?.maneuvers?.[state.currentManeuverIndex]?.instruction || "Continue on current corridor"}
                 </p>
-                <p className="text-[11px] text-emerald-300/80 mt-1">
-                  Then continue toward {state.destination?.name || "destination"}
-                </p>
+                {/* Next Checkpoint or Destination subtitle */}
+                {activeStops.length > 0 ? (
+                  (() => {
+                    const nextCp = activeStops.find((s) => !s.visited) || activeStops[activeStops.length - 1];
+                    const nextCpIdx = activeStops.indexOf(nextCp);
+                    const pendingCount = activeStops.filter((s) => !s.visited).length;
+                    return (
+                      <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-200 truncate">
+                        <span className="px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200 font-black text-[9px] uppercase tracking-wider shrink-0">
+                          🚩 CP {nextCpIdx + 1}
+                        </span>
+                        <span className="truncate font-semibold">Next: {nextCp.name}</span>
+                        {pendingCount > 1 && (
+                          <span className="text-emerald-300/80 text-[10px] shrink-0 font-normal">({pendingCount} remaining)</span>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <p className="text-[11px] text-emerald-300/80 mt-1 truncate">
+                    Then continue toward {state.destination?.name || "destination"}
+                  </p>
+                )}
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex flex-col items-end gap-1 shrink-0">
                 <span className="px-2 py-0.5 rounded-full bg-black/30 text-[10px] font-bold tracking-widest uppercase">
                   GPS LIVE
                 </span>
-                <span className="text-xs font-bold text-emerald-200">
-                  {state.currentSpeedKmh} km/h
+                <span className="text-xs font-mono font-bold text-emerald-200">
+                  {state.currentSpeedKmh || state.simSpeedKmh || 60} km/h
                 </span>
               </div>
             </div>
@@ -1273,7 +1401,7 @@ export const GoogleMapsLayout: React.FC = () => {
           )}
 
           {/* Bottom Navigation Bar */}
-          <div className="absolute bottom-3 left-2 right-2 sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-[540px] z-30 pointer-events-auto">
+          <div className="absolute bottom-3 left-2 right-2 sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-[600px] z-30 pointer-events-auto">
             <div className={`rounded-2xl shadow-2xl border p-3 sm:p-3.5 flex items-center justify-between gap-2 sm:gap-3 ${
               isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#1e293b] border-slate-700 text-white"
             } backdrop-blur-md`}>
@@ -1299,31 +1427,51 @@ export const GoogleMapsLayout: React.FC = () => {
 
               {/* Navigation Controls */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* TTS Mute Toggle */}
-                <button
-                  onClick={() => setIsMuted(toggleTTSMute())}
-                  className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all active:scale-95 ${
-                    isMuted
-                      ? "bg-red-500/15 text-red-500"
-                      : "bg-emerald-500/15 text-emerald-500"
-                  }`}
-                  title={isMuted ? "Unmute Voice Navigation" : "Mute Voice Navigation"}
-                >
-                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                </button>
+                {/* Checkpoints Button (if stops exist) */}
+                {activeStops.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setIsCheckpointsSheetOpen(!isCheckpointsSheetOpen);
+                      setIsNavStepsOpen(false);
+                      setIsNavSpeedPopoverOpen(false);
+                    }}
+                    className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-1 transition-all active:scale-95 border ${
+                      isCheckpointsSheetOpen
+                        ? "bg-amber-500 border-amber-400 text-white shadow-sm"
+                        : "bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300"
+                    }`}
+                    title="View Journey Checkpoints Itinerary"
+                  >
+                    <Milestone className="w-3.5 h-3.5" />
+                    <span>CPs ({activeStops.filter((s) => !s.visited).length}/{activeStops.length})</span>
+                  </button>
+                )}
 
-                {/* Voice Cast Toggle */}
+                {/* Speed Controller Popover Button */}
                 <button
-                  onClick={handleToggleVoiceCast}
-                  className="px-2 py-1.5 rounded-full text-[10px] font-black border flex items-center gap-1 transition-all active:scale-95 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
-                  title={`Voice Cast: ${voiceCast === "american" ? "American Copilot (US English)" : "Sarvam AI (bulbul:v3)"}. Click to switch.`}
+                  onClick={() => {
+                    setIsNavSpeedPopoverOpen(!isNavSpeedPopoverOpen);
+                    setIsCheckpointsSheetOpen(false);
+                    setIsNavStepsOpen(false);
+                  }}
+                  className={`px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-mono font-bold flex items-center gap-1 transition-all active:scale-95 border ${
+                    isNavSpeedPopoverOpen
+                      ? "bg-blue-600 border-blue-500 text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                  }`}
+                  title="User-Defined Driving Simulation Velocity"
                 >
-                  <span>{voiceCast === "american" ? "🇺🇸 US" : "🇮🇳 Sarvam"}</span>
+                  <Gauge className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>{state.simSpeedKmh || 60} km/h</span>
                 </button>
 
                 {/* Turn-by-Turn Steps Modal Toggle */}
                 <button
-                  onClick={() => setIsNavStepsOpen(!isNavStepsOpen)}
+                  onClick={() => {
+                    setIsNavStepsOpen(!isNavStepsOpen);
+                    setIsCheckpointsSheetOpen(false);
+                    setIsNavSpeedPopoverOpen(false);
+                  }}
                   className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-full text-[10px] sm:text-xs font-bold flex items-center gap-1 transition-all active:scale-95 border ${
                     isNavStepsOpen
                       ? "bg-blue-600 border-blue-600 text-white shadow-sm"
@@ -1349,19 +1497,9 @@ export const GoogleMapsLayout: React.FC = () => {
                   }`}
                   title={state.isReplaying ? "Pause Drive Simulation" : "Start Drive Simulation"}
                 >
-                  {state.isReplaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                  <span className="hidden sm:inline">{state.isReplaying ? "Simulating" : "Simulate"}</span>
+                  {state.isReplaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                  <span className="hidden sm:inline">{state.isReplaying ? "Pause" : "Drive"}</span>
                 </button>
-                
-                {state.isReplaying && (
-                  <button
-                    onClick={() => setReplaySpeed(state.replaySpeed === 1 ? 2 : state.replaySpeed === 2 ? 5 : 1)}
-                    className="px-1.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                    title="Simulation Speed"
-                  >
-                    {state.replaySpeed || 1}x
-                  </button>
-                )}
 
                 {/* Exit Navigation */}
                 <button
@@ -1439,6 +1577,181 @@ export const GoogleMapsLayout: React.FC = () => {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {/* In-Navigation Checkpoints Itinerary Sheet */}
+            {isCheckpointsSheetOpen && activeStops.length > 0 && (
+              <div className="mt-2 rounded-2xl shadow-2xl border p-3 sm:p-4 max-h-64 overflow-y-auto backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 bg-white/95 dark:bg-[#1e293b]/95 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white flex flex-col gap-2">
+                <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-2">
+                    <Milestone className="w-4 h-4 text-amber-500" />
+                    <span className="text-xs font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                      Multi-Stop Checkpoints
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {activeStops.filter((s) => s.visited).length} of {activeStops.length} visited
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setIsCheckpointsSheetOpen(false)}
+                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  {/* Origin */}
+                  <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 text-xs">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0">
+                      🟢
+                    </div>
+                    <div className="flex-1 truncate">
+                      <p className="font-bold text-xs truncate">Start: {state.origin?.name}</p>
+                      <p className="text-[10px] text-slate-400 truncate">Departure location</p>
+                    </div>
+                  </div>
+
+                  {/* Intermediate Checkpoints */}
+                  {activeStops.map((stop, idx) => {
+                    const isNext = !stop.visited && (!activeStops[idx - 1] || activeStops[idx - 1].visited);
+                    return (
+                      <div
+                        key={stop.id}
+                        className={`flex items-center justify-between gap-2 p-2 rounded-xl border text-xs transition-all ${
+                          stop.visited
+                            ? "bg-emerald-500/10 border-emerald-500/30 opacity-70"
+                            : isNext
+                            ? "bg-amber-500/15 border-amber-500/60 ring-1 ring-amber-500/40"
+                            : "bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] text-white shrink-0 ${
+                            stop.visited ? "bg-emerald-600" : isNext ? "bg-amber-500 animate-pulse" : "bg-slate-400"
+                          }`}>
+                            {stop.visited ? "✓" : idx + 1}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-xs truncate">{stop.name}</p>
+                            <p className="text-[10px] text-slate-400 truncate">
+                              {stop.visited ? "✅ Checkpoint Reached" : isNext ? "🎯 Next Waypoint on Route" : `⏳ Upcoming Checkpoint ${idx + 1}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        {!stop.visited && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => markCheckpointVisited(stop.id)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-sm transition-all"
+                              title="Mark as visited"
+                            >
+                              Reached
+                            </button>
+                            {isNext && (
+                              <button
+                                onClick={skipNextCheckpoint}
+                                className="px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-700 dark:text-slate-300 font-semibold text-[10px] transition-all"
+                                title="Skip to next checkpoint"
+                              >
+                                Skip
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Destination */}
+                  <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 text-xs">
+                    <div className="w-5 h-5 rounded-full bg-red-500/20 text-red-500 flex items-center justify-center font-bold text-[10px] shrink-0">
+                      🏁
+                    </div>
+                    <div className="flex-1 truncate">
+                      <p className="font-bold text-xs truncate">Destination: {state.destination?.name}</p>
+                      <p className="text-[10px] text-slate-400 truncate">Final stop</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* In-Navigation Driving Velocity / Speed Controller Popover */}
+            {isNavSpeedPopoverOpen && (
+              <div className="mt-2 rounded-2xl shadow-2xl border p-3.5 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 bg-white/95 dark:bg-[#1e293b]/95 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white flex flex-col gap-2.5">
+                <div className="flex items-center justify-between border-b pb-2 border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <Gauge className="w-4 h-4" />
+                    <span>Driving Simulation Speed Controller</span>
+                  </div>
+                  <button
+                    onClick={() => setIsNavSpeedPopoverOpen(false)}
+                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 dark:text-slate-400">Target Driving Velocity:</span>
+                  <span className="font-mono font-black text-sm text-slate-900 dark:text-white">
+                    {state.simSpeedKmh || 60} km/h <span className="text-emerald-600 dark:text-emerald-400 font-normal text-xs">({state.replaySpeed || 1}x multiplier)</span>
+                  </span>
+                </div>
+
+                {/* Range Slider */}
+                <input
+                  type="range"
+                  min="20"
+                  max="160"
+                  step="5"
+                  value={state.simSpeedKmh || 60}
+                  onChange={(e) => setSimSpeedKmh(Number(e.target.value))}
+                  className="w-full accent-emerald-500 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer"
+                />
+
+                {/* Presets */}
+                <div className="grid grid-cols-4 gap-1.5 pt-1">
+                  {[
+                    { label: "30 km/h (City)", val: 30 },
+                    { label: "60 km/h (Cruise)", val: 60 },
+                    { label: "90 km/h (Highway)", val: 90 },
+                    { label: "130 km/h (Fast)", val: 130 },
+                  ].map((p) => (
+                    <button
+                      key={p.val}
+                      onClick={() => setSimSpeedKmh(p.val)}
+                      className={`py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                        state.simSpeedKmh === p.val
+                          ? "bg-emerald-600 border-emerald-500 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Multiplier Presets */}
+                <div className="flex items-center gap-1.5 pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-[10px] text-slate-400 font-bold shrink-0">Time Warp:</span>
+                  {[0.5, 1, 2, 5].map((mult) => (
+                    <button
+                      key={mult}
+                      onClick={() => setReplaySpeed(mult)}
+                      className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${
+                        state.replaySpeed === mult
+                          ? "bg-blue-600 border-blue-500 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400"
+                      }`}
+                    >
+                      {mult}x
+                    </button>
+                  ))}
                 </div>
               </div>
             )}

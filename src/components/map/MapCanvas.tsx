@@ -763,23 +763,47 @@ export const MapCanvas: React.FC = () => {
         stop.name.toLowerCase().includes("mandal") ||
         stop.name.toLowerCase().includes("raja");
       const isCoffee = stop.name.toLowerCase().includes("starbucks") || stop.type === "coffee";
-      const icon = isPandal ? "🛕" : isCoffee ? "☕" : String.fromCharCode(65 + (idx % 26));
-      const badgeBg = isPandal ? "linear-gradient(135deg, #f97316, #ea580c)" : isCoffee ? "#059669" : "#f59e0b";
+      const icon = stop.visited ? "✓" : isPandal ? "🛕" : isCoffee ? "☕" : String.fromCharCode(65 + (idx % 26));
+      const badgeBg = stop.visited
+        ? "#059669"
+        : isPandal
+        ? "linear-gradient(135deg, #f97316, #ea580c)"
+        : isCoffee
+        ? "#059669"
+        : "#f59e0b";
       const stopNumber = idx + 1;
 
       const el = document.createElement("div");
       el.className = "flex flex-col items-center cursor-pointer group";
       el.innerHTML = `
-        <div style="padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;margin-bottom:2px;box-shadow:0 2px 8px rgba(0,0,0,0.25);background:${isLight ? "white" : "#0f172a"};color:${isLight ? "#1e293b" : "#f8fafc"};border:1px solid ${isPandal ? "#f97316" : isLight ? "#e2e8f0" : "#334155"}">
-          ${isPandal ? `<span style="color:#ea580c;font-weight:800;margin-right:3px;">#${stopNumber}</span>` : ""}${stop.name}
+        <div style="padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:800;white-space:nowrap;margin-bottom:2px;box-shadow:0 3px 10px rgba(0,0,0,0.25);background:${isLight ? "white" : "#0f172a"};color:${isLight ? "#1e293b" : "#f8fafc"};border:1.5px solid ${stop.visited ? "#10b981" : isPandal ? "#f97316" : "#f59e0b"};display:flex;align-items:center;gap:4px;">
+          <span style="color:${stop.visited ? "#059669" : "#ea580c"};font-weight:900;">🚩 CP ${stopNumber}</span>
+          <span style="font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;">${stop.name}</span>
+          ${stop.visited ? `<span style="color:#059669;font-size:10px;">(✓)</span>` : ""}
         </div>
-        <div style="width:26px;height:26px;background:${badgeBg};border-radius:50%;border:2px solid white;color:white;font-size:12px;font-weight:bold;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35)">
+        <div style="width:28px;height:28px;background:${badgeBg};border-radius:50%;border:2px solid white;color:white;font-size:12px;font-weight:bold;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);transition:transform 0.2s;" class="group-hover:scale-110">
           ${icon}
         </div>
       `;
 
+      const popupHtml = `
+        <div style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding:4px 2px; color:${isLight ? "#1e293b" : "#f1f5f9"}; max-width:240px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:4px;">
+            <span style="font-size:10px; font-weight:800; text-transform:uppercase; background:${stop.visited ? "#dcfce7" : "#fef3c7"}; color:${stop.visited ? "#166534" : "#92400e"}; padding:1px 6px; border-radius:999px;">
+              ${stop.visited ? "✓ Checkpoint Visited" : `🚩 Checkpoint #${stopNumber}`}
+            </span>
+            <span style="font-size:10px; color:#94a3b8; font-weight:600;">+${stop.detourMinutes || 0}m detour</span>
+          </div>
+          <div style="font-size:12px; font-weight:700; margin-bottom:2px;">${stop.name}</div>
+          <div style="font-size:10.5px; color:#64748b; line-height:1.35;">${stop.address || "Multi-route waypoint stop"}</div>
+        </div>
+      `;
+
+      const popup = new mapboxgl.Popup({ offset: 18, closeButton: false, maxWidth: "260px" }).setHTML(popupHtml);
+
       const marker = new mapboxgl.Marker({ element: el, anchor: "bottom" })
         .setLngLat([stop.coordinate.lng, stop.coordinate.lat])
+        .setPopup(popup)
         .addTo(map);
       stopMarkersRef.current.push(marker);
     });

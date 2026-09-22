@@ -1,8 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useJourneyStore } from "@/lib/state/journeyStore";
-import { AlertCircle, ChevronRight, Coffee, Flag, Pause, Play, X } from "lucide-react";
+import { AlertCircle, ChevronRight, Coffee, Flag, Gauge, Pause, Play, SlidersHorizontal, X, Zap } from "lucide-react";
 
 export const RouteScrubber: React.FC = () => {
   const {
@@ -13,24 +13,17 @@ export const RouteScrubber: React.FC = () => {
     resetJourney,
     toggleReplay,
     setReplaySpeed,
+    setSimSpeedKmh,
     seekProgress,
-    tickReplay,
     sendUserMessage,
   } = useJourneyStore();
+
+  const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
 
   const isNavigating =
     state.journeyState === "NAVIGATING" ||
     state.journeyState === "MONITORING" ||
     state.journeyState === "ROUTE_SWITCH_PENDING";
-
-  // Automated Replay Simulation Loop
-  React.useEffect(() => {
-    if (!isNavigating || !state.isReplaying) return;
-    const interval = setInterval(() => {
-      tickReplay();
-    }, 350);
-    return () => clearInterval(interval);
-  }, [isNavigating, state.isReplaying, tickReplay]);
 
   if (!isNavigating || !state.activeRoute) return null;
 
@@ -135,17 +128,34 @@ export const RouteScrubber: React.FC = () => {
             <div className="h-full bg-emerald-500 rounded-r-full" style={{ width: "25%" }} />
           </div>
 
-          {/* Waypoint markers on scrubber */}
+          {/* Checkpoints along the Scrubber Timeline */}
           {addedStops.map((stop, idx) => {
-            const stopPercent = Math.min(85, Math.max(25, (idx + 1) * 35));
+            const stopPercent = Math.min(90, Math.max(10, ((idx + 1) / (addedStops.length + 1)) * 100));
+            const isReached = stop.visited || state.routeProgress >= stopPercent / 100;
+
             return (
-              <div
+              <button
                 key={stop.id}
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-none flex flex-col items-center"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  seekProgress(stopPercent / 100);
+                }}
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 pointer-events-auto flex flex-col items-center group/cp cursor-pointer z-10"
                 style={{ left: `${stopPercent}%` }}
+                title={`Checkpoint ${idx + 1}: ${stop.name} (${isReached ? "Reached" : "Upcoming"}) - Click to seek`}
               >
-                <span className="text-[10px] drop-shadow">☕</span>
-              </div>
+                <div className={`px-1.5 py-0.5 rounded-full text-[9px] font-black shadow-md border transition-all group-hover/cp:scale-125 flex items-center gap-0.5 ${
+                  isReached
+                    ? "bg-emerald-600 border-emerald-400 text-white"
+                    : "bg-amber-500 border-amber-300 text-white animate-pulse"
+                }`}>
+                  <span>{isReached ? "✓" : "🚩"}</span>
+                  <span className="text-[8px]">CP{idx + 1}</span>
+                </div>
+                <span className="opacity-0 group-hover/cp:opacity-100 absolute bottom-full mb-1 text-[9px] font-bold bg-black/80 text-white px-2 py-0.5 rounded whitespace-nowrap pointer-events-none transition-opacity">
+                  {stop.name}
+                </span>
+              </button>
             );
           })}
 
@@ -155,6 +165,82 @@ export const RouteScrubber: React.FC = () => {
             style={{ left: `${Math.max(4, Math.min(96, state.routeProgress * 100))}%` }}
           />
         </div>
+
+        {/* Speed Adjustment Popover Modal */}
+        {isSpeedMenuOpen && (
+          <div className="rounded-2xl p-3 bg-slate-900/95 border border-slate-700 text-white shadow-2xl flex flex-col gap-2.5 animate-in fade-in slide-in-from-bottom-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                <Gauge className="w-3.5 h-3.5" />
+                <span>Simulation Driving Speed Controller</span>
+              </div>
+              <button
+                onClick={() => setIsSpeedMenuOpen(false)}
+                className="p-1 hover:bg-slate-800 rounded-full text-slate-400"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-400">Target Velocity:</span>
+              <span className="font-mono font-black text-white text-sm">
+                {state.simSpeedKmh || 60} km/h <span className="text-emerald-400 font-normal text-xs">({state.replaySpeed || 1}x multiplier)</span>
+              </span>
+            </div>
+
+            {/* Slider */}
+            <input
+              type="range"
+              min="20"
+              max="160"
+              step="5"
+              value={state.simSpeedKmh || 60}
+              onChange={(e) => setSimSpeedKmh(Number(e.target.value))}
+              className="w-full accent-emerald-500 h-1.5 bg-slate-700 rounded-lg cursor-pointer"
+            />
+
+            {/* Speed Presets */}
+            <div className="flex items-center justify-between gap-1.5 pt-1">
+              {[
+                { label: "30 km/h (City)", val: 30 },
+                { label: "60 km/h (Cruising)", val: 60 },
+                { label: "90 km/h (Highway)", val: 90 },
+                { label: "130 km/h (Express)", val: 130 },
+              ].map((preset) => (
+                <button
+                  key={preset.val}
+                  onClick={() => setSimSpeedKmh(preset.val)}
+                  className={`flex-1 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                    state.simSpeedKmh === preset.val
+                      ? "bg-emerald-600 border-emerald-500 text-white"
+                      : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Multiplier Presets */}
+            <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800">
+              <span className="text-[10px] text-slate-400 font-bold shrink-0">Multiplier:</span>
+              {[0.5, 1, 2, 5].map((mult) => (
+                <button
+                  key={mult}
+                  onClick={() => setReplaySpeed(mult)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${
+                    state.replaySpeed === mult
+                      ? "bg-blue-600 border-blue-500 text-white"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {mult}x
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Navigation Playback & Step Controller */}
         <div className="flex items-center justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800/80 text-xs">
@@ -178,19 +264,19 @@ export const RouteScrubber: React.FC = () => {
               )}
             </button>
 
+            {/* Custom Speed Controller Button */}
             <button
-              onClick={() => {
-                const nextSpeed = state.replaySpeed === 1 ? 2 : state.replaySpeed === 2 ? 5 : 1;
-                setReplaySpeed(nextSpeed);
-              }}
-              className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono font-bold text-xs transition-colors"
-              title="Toggle simulation replay speed"
+              onClick={() => setIsSpeedMenuOpen(!isSpeedMenuOpen)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono font-bold text-xs transition-colors border border-slate-200 dark:border-slate-700"
+              title="Click to customize simulation speed & velocity"
             >
-              {state.replaySpeed || 1}x
+              <Gauge className="w-3 h-3 text-emerald-500" />
+              <span>{state.simSpeedKmh || 60} km/h</span>
+              <span className="text-[10px] text-slate-400">({state.replaySpeed || 1}x)</span>
             </button>
 
             <span className="text-slate-400 text-[11px] hidden sm:inline">
-              {state.isReplaying ? "Simulating live corridor navigation" : "Paused"}
+              {state.isReplaying ? "Simulating corridor drive" : "Paused"}
             </span>
           </div>
 
