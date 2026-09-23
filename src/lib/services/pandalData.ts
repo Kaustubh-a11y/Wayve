@@ -185,18 +185,17 @@ export function extractPandalsFromQuery(text: string): PandalLocation[] {
     }
   }
 
-  // If the user pasted the entire prompt or generic "all pandals" / "city tour" request, return all 15
-  if (
-    matched.length >= 6 ||
-    lower.includes("all ganpati") ||
-    lower.includes("all pandals") ||
+  // If explicitly asking for pandals or matches found, return them; otherwise return empty array
+  const isExplicitPandalQuery =
+    lower.includes("pandal") ||
+    lower.includes("ganpati") ||
     lower.includes("tumbbad") ||
-    (lower.includes("pandal") && lower.includes("city tour"))
-  ) {
-    return NAGPUR_GANPATI_PANDALS;
-  }
+    lower.includes("kantara") ||
+    lower.includes("locations [");
 
-  return matched.length > 0 ? matched : NAGPUR_GANPATI_PANDALS;
+  if (matched.length > 0) return matched;
+  if (isExplicitPandalQuery) return NAGPUR_GANPATI_PANDALS;
+  return [];
 }
 
 /**

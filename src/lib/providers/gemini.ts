@@ -40,19 +40,9 @@ export function parseIntentRuleBased(
   };
 
   // 1. Detect Multi-Stop City Tour / Ganpati Pandal Loop Request
-  const isTourRequest =
-    q.includes("tour") ||
-    q.includes("pandal") ||
-    q.includes("roam") ||
-    q.includes("ganpati") ||
-    q.includes("locations [") ||
-    q.includes("city tour") ||
-    q.includes("come back to current location") ||
-    (q.includes("visit") && (q.includes("theme") || q.includes("ground") || q.includes("chowk")));
-
-  if (isTourRequest) {
-    const rawPandals = extractPandalsFromQuery(query);
-    const startCoord = { lat: 21.1463, lng: 79.0849 }; // Nagpur Center
+  const rawPandals = extractPandalsFromQuery(query);
+  if (rawPandals.length > 0) {
+    const startCoord = userLocation?.coordinate || { lat: 21.1463, lng: 79.0849 }; // Nagpur Center
     const ordered = optimizeTourOrder(startCoord, rawPandals);
 
     const isRoundTrip =
@@ -319,14 +309,14 @@ Never include markdown code fences or backticks. Only output the raw JSON object
     const parsed = JSON.parse(cleanJson);
     const latency = Date.now() - startTime;
 
-    // If it's a tour or pandal visit request, cross-reference with Nagpur pandals database
+    // If it's a specific pandal tour request, cross-reference with Nagpur pandals database
     let tourWaypoints;
     let isTour = Boolean(parsed.isTour);
     let isRoundTrip = Boolean(parsed.isRoundTrip);
-    if (isTour || userPrompt.toLowerCase().includes("pandal") || userPrompt.toLowerCase().includes("ganpati")) {
+    const rawPandals = extractPandalsFromQuery(userPrompt);
+    if (rawPandals.length > 0) {
       isTour = true;
       isRoundTrip = true;
-      const rawPandals = extractPandalsFromQuery(userPrompt);
       const startCoord = userLocation?.coordinate || { lat: 21.1463, lng: 79.0849 };
       const ordered = optimizeTourOrder(startCoord, rawPandals);
       tourWaypoints = ordered.map((p) => ({
