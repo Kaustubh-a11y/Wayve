@@ -388,23 +388,7 @@ export const MapCanvas: React.FC = () => {
     for (const alt of state.routes) {
       if (alt.id === active?.id) continue;
       if (!alt.geometry || alt.geometry.length < 2) continue;
-      const altMid = alt.geometry[Math.floor(alt.geometry.length / 2)];
-
-      // Require physical separation from active route (at least 0.0020 deg ≈ 220m)
-      const distFromActive = activeMid
-        ? Math.hypot(altMid[0] - activeMid[0], altMid[1] - activeMid[1])
-        : 1;
-      if (distFromActive < 0.0020) continue;
-
-      // Require separation from already chosen visible alternatives (at least 0.0015 deg ≈ 165m)
-      const isTooCloseToOther = visibleAlternatives.some((other) => {
-        const oMid = other.geometry[Math.floor(other.geometry.length / 2)];
-        return Math.hypot(altMid[0] - oMid[0], altMid[1] - oMid[1]) < 0.0015;
-      });
-      if (isTooCloseToOther) continue;
-
       visibleAlternatives.push(alt);
-      if (visibleAlternatives.length >= 3) break; // Display up to 3 distinct alternatives on map
     }
 
     visibleAlternatives.forEach((alt, idx) => {
